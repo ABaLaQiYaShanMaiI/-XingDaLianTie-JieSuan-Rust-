@@ -61,6 +61,10 @@ pub struct Cli {
     /// 自定义输出文件名（单文件模式为精确文件名，批量模式作为前缀_001/002...）
     #[arg(long = "name")]
     pub name: Option<String>,
+
+    /// 启用 OCR 模式（PDF 无文本层时自动调用 Tesseract + Ghostscript）
+    #[arg(long = "ocr", default_value_t = false)]
+    pub ocr: bool,
 }
 
 /// 设置日志系统
@@ -88,6 +92,7 @@ pub fn process_single(
     dump_text: bool,
     include_summary: bool,
     output_name: Option<&str>,
+    enable_ocr: bool,
 ) -> Result<String> {
     let pdf_p = Path::new(pdf_path);
     if !pdf_p.exists() {
@@ -104,7 +109,7 @@ pub fn process_single(
         .map_err(|e| XingDaError::Parse(format!("无法创建输出目录: {}", e)))?;
 
     // --- 1. 解析 PDF ---
-    let mut data = parse_pdf(pdf_path)?;
+    let mut data = parse_pdf(pdf_path, enable_ocr)?;
 
     // 导出原始文本（调试用）
     if dump_text {
@@ -180,6 +185,7 @@ pub fn batch_process(
     dump_text: bool,
     include_summary: bool,
     output_name: Option<&str>,
+    enable_ocr: bool,
 ) -> Result<Vec<String>> {
     let mut results = Vec::new();
     let mut errors = Vec::new();
@@ -222,6 +228,7 @@ pub fn batch_process(
             dump_text,
             include_summary,
             batch_name.as_deref(),
+            enable_ocr,
         ) {
             Ok(result) => {
                 if result.is_empty() {
@@ -276,6 +283,7 @@ pub fn run_cli() -> Result<()> {
             cli.dump_text,
             include_summary,
             cli.name.as_deref(),
+            cli.ocr,
         )?;
     } else if let Some(ref pdf) = cli.pdf {
         let output = process_single(
@@ -286,6 +294,7 @@ pub fn run_cli() -> Result<()> {
             cli.dump_text,
             include_summary,
             cli.name.as_deref(),
+            cli.ocr,
         )?;
         if !output.is_empty() {
             info!("\n输出文件: {}", output);

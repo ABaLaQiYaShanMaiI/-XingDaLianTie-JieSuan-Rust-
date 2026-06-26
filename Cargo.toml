@@ -36,6 +36,9 @@ env_logger = "0.11"
 thiserror = "2"
 anyhow = "1"
 
+# --- RAII 守卫（用于 OCR 临时文件清理）---
+scopeguard = "1"
+
 # --- 文件/路径 ---
 dirs = "5"
 

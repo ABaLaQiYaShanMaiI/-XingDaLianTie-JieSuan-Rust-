@@ -10,6 +10,7 @@ mod config;
 mod error;
 mod excel_writer;
 mod gui;
+mod ocr;
 mod models;
 mod parser;
 mod validator;

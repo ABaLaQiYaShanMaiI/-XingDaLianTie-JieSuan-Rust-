@@ -83,7 +83,9 @@ fn boundary_patterns() -> &'static [Regex] {
 // ============================================================
 
 /// 解析 PDF 结算单，返回 SettlementData 对象
-pub fn parse_pdf(pdf_path: &str) -> Result<SettlementData> {
+///
+/// `enable_ocr`: 当 PDF 无文本层时，是否启用 Tesseract+Ghostscript OCR
+pub fn parse_pdf(pdf_path: &str, enable_ocr: bool) -> Result<SettlementData> {
     info!("正在读取 PDF: {}", pdf_path);
 
     let path = Path::new(pdf_path);
@@ -95,7 +97,7 @@ pub fn parse_pdf(pdf_path: &str) -> Result<SettlementData> {
     data.pdf_path = Some(pdf_path.to_string());
 
     // --- 提取 PDF 文本 ---
-    let full_text = extract_pdf_text(pdf_path)?;
+    let full_text = extract_pdf_text(pdf_path, enable_ocr)?;
 
     if full_text.trim().is_empty() {
         return Err(XingDaError::Parse(format!("PDF 无文本内容: {}", pdf_path)));
@@ -121,8 +123,8 @@ pub fn parse_pdf(pdf_path: &str) -> Result<SettlementData> {
     Ok(data)
 }
 
-/// 使用 pdf-extract 提取 PDF 文本
-fn extract_pdf_text(pdf_path: &str) -> Result<String> {
+/// 使用 pdf-extract 提取 PDF 文本，无文本层时可选 OCR 回退
+fn extract_pdf_text(pdf_path: &str, enable_ocr: bool) -> Result<String> {
     let bytes = fs::read(pdf_path)
         .map_err(|e| XingDaError::Parse(format!("无法读取 PDF 文件: {}", e)))?;
 
@@ -142,6 +144,24 @@ fn extract_pdf_text(pdf_path: &str) -> Result<String> {
                 }
                 if !all_text.trim().is_empty() {
                     return Ok(all_text);
+                }
+
+                // pdf-extract 空 + lopdf 空 → 无文本层
+                if enable_ocr {
+                    info!("PDF 无文本层，启用 OCR 通道（需 Ghostscript + Tesseract）");
+                    let config = ParserConfig::default();
+                    let ocr_result = crate::ocr::perform_ocr(pdf_path, &config)?;
+                    info!(
+                        "OCR 完成: {} 页，共 {} 字符",
+                        ocr_result.page_count,
+                        ocr_result.text.len()
+                    );
+                    return Ok(ocr_result.text);
+                } else {
+                    return Err(XingDaError::Pdf(
+                        "PDF 无文本层。请使用 --ocr 标志启用 OCR 通道（需安装 Ghostscript 和 Tesseract）。\n\
+                         或参考 README 中的安装说明。".to_string()
+                    ));
                 }
             }
             Ok(text)
@@ -164,7 +184,23 @@ fn extract_pdf_text(pdf_path: &str) -> Result<String> {
                 }
             }
             if all_text.trim().is_empty() {
-                warn!("PDF 无文本层，OCR 功能暂未在 Rust 版中实现（需外部工具支持）");
+                if enable_ocr {
+                    info!("pdf-extract 和 lopdf 均无法提取文本，启用 OCR 通道");
+                    let config = ParserConfig::default();
+                    let ocr_result = crate::ocr::perform_ocr(pdf_path, &config)?;
+                    info!(
+                        "OCR 完成: {} 页，共 {} 字符",
+                        ocr_result.page_count,
+                        ocr_result.text.len()
+                    );
+                    return Ok(ocr_result.text);
+                } else {
+                    return Err(XingDaError::Pdf(
+                        "PDF 无文本层且 pdf-extract / lopdf 均无法解析。\n\
+                         请使用 --ocr 标志启用 OCR 通道（需安装 Ghostscript 和 Tesseract）。\n\
+                         或参考 README 中的安装说明。".to_string()
+                    ));
+                }
             }
             Ok(all_text)
         }
@@ -637,4 +673,32 @@ pub fn merge_deduplicate(
     }
 
     result
+}
+
+// ============================================================
+// 单元测试
+// ============================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pre_merge_split_lines() {
+        let input = vec![
+            "2",
+            "  3月 11日，原料分厂...",
+            "违反规定",
+            "100.00"
+        ];
+        let result = pre_merge_split_lines(&input);
+        // 两行均经过 trim()，中间仅一个空格
+        assert_eq!(result[0], "2 3月 11日，原料分厂...");
+    }
+
+    #[test]
+    fn test_extract_final_number() {
+        assert_eq!(extract_final_number("违反规定 100.00"), Some(100.00));
+        assert_eq!(extract_final_number("无金额"), None);
+    }
 }

@@ -7,7 +7,7 @@ use std::sync::mpsc;
 use std::thread;
 
 use eframe::egui;
-use log::warn;
+use log::{info, warn};
 
 use crate::classifier::classify_records;
 use crate::config::{load_rules, load_excel_style};
@@ -37,6 +37,7 @@ struct XingDaApp {
     validate_only: bool,
     dump_text: bool,
     no_summary: bool,
+    enable_ocr: bool,
 
     // 处理状态
     processing: bool,
@@ -59,6 +60,7 @@ impl Default for XingDaApp {
             validate_only: false,
             dump_text: false,
             no_summary: false,
+            enable_ocr: false,
             processing: false,
             log_messages: Vec::new(),
             log_receiver: None,
@@ -135,6 +137,7 @@ impl eframe::App for XingDaApp {
                 ui.checkbox(&mut self.validate_only, "仅校验不生成 Excel（--validate-only）");
                 ui.checkbox(&mut self.dump_text, "同时导出原始文本（--dump-text）");
                 ui.checkbox(&mut self.no_summary, "不生成汇总信息区域（--no-summary）");
+                ui.checkbox(&mut self.enable_ocr, "启用 OCR（PDF 无文本层时使用 Tesseract+Ghostscript）");
             });
 
             ui.separator();
@@ -236,6 +239,7 @@ impl XingDaApp {
         let validate_only = self.validate_only;
         let dump_text = self.dump_text;
         let include_summary = !self.no_summary;
+        let enable_ocr = self.enable_ocr;
 
         let (log_tx, log_rx) = mpsc::channel();
         let (result_tx, result_rx) = mpsc::channel();
@@ -258,6 +262,7 @@ impl XingDaApp {
                 validate_only,
                 dump_text,
                 include_summary,
+                enable_ocr,
                 &send_log,
             );
 
@@ -326,6 +331,7 @@ fn process_in_thread(
     validate_only: bool,
     dump_text: bool,
     include_summary: bool,
+    enable_ocr: bool,
     send_log: &dyn Fn(LogMessage),
 ) -> Result<String, String> {
     let rules = load_rules(rules_path).map_err(|e| format!("加载配置失败: {}", e))?;
@@ -333,7 +339,7 @@ fn process_in_thread(
 
     send_log(LogMessage::Info("正在解析 PDF...".to_string()));
 
-    let mut data = parse_pdf(pdf_path).map_err(|e| format!("PDF解析失败: {}", e))?;
+    let mut data = parse_pdf(pdf_path, enable_ocr).map_err(|e| format!("PDF解析失败: {}", e))?;
 
     send_log(LogMessage::Info(format!(
         "提取 {} 条考核记录",
@@ -415,11 +421,25 @@ pub fn launch_gui() {
     }
 }
 
-/// 从系统字体目录加载中文字体并注册到 egui
+/// 从系统字体目录加载中文字体
+///
+/// 自动尝试以下字体（优先级递减）：
+/// 1. 微软雅黑（推荐）
+/// 2. 宋体
+/// 3. 黑体
+/// 4. 仿宋
+///
+/// 如果所有字体加载失败，使用 egui 默认字体（不阻止启动）
+///
+/// # 兼容性说明
+///
+/// Windows 7/8+ 均包含微软雅黑，无需担心字体缺失。
+/// 但建议在 README 中说明字体依赖。
 fn setup_chinese_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
 
-    // Windows 系统中文字体路径（按优先级尝试）
+    // Windows 7/8+ 均包含微软雅黑，无需担心字体缺失
+    // 但建议在 README 中说明字体依赖
     let font_paths = [
         "C:\\Windows\\Fonts\\msyh.ttc",   // 微软雅黑
         "C:\\Windows\\Fonts\\msyh.ttf",
@@ -431,6 +451,8 @@ fn setup_chinese_fonts(ctx: &egui::Context) {
     let font_name = "chinese_font";
     for path in &font_paths {
         if let Ok(bytes) = std::fs::read(path) {
+            info!("已加载中文字体: {}", path);
+
             fonts.font_data.insert(
                 font_name.to_owned(),
                 std::sync::Arc::new(egui::FontData::from_owned(bytes.to_vec())),
@@ -454,6 +476,6 @@ fn setup_chinese_fonts(ctx: &egui::Context) {
         }
     }
 
-    // 所有系统路径都失败时，仍用默认字体（不阻止启动）
+    warn!("未找到系统中文字体，使用默认字体");
     ctx.set_fonts(fonts);
 }
