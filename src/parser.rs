@@ -101,6 +101,9 @@ pub fn parse_pdf(pdf_path: &str) -> Result<SettlementData> {
         return Err(XingDaError::Parse(format!("PDF 无文本内容: {}", pdf_path)));
     }
 
+    // 保存原始文本（用于 --dump-text）
+    data.raw_text = full_text.clone();
+
     // --- 提取合同基本信息 ---
     extract_contract_info(&mut data, &full_text);
 

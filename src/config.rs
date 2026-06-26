@@ -229,6 +229,9 @@ pub fn default_rules() -> ClassifyRules {
 // 加载函数
 // ============================================================
 
+/// 编译时嵌入的 classify_rules.yaml 内容（自包含回退）
+const EMBEDDED_RULES_YAML: &str = include_str!("../classify_rules.yaml");
+
 /// 获取默认分类规则文件的候选路径列表
 fn get_default_rules_paths() -> Vec<PathBuf> {
     let mut paths: Vec<PathBuf> = Vec::new();
@@ -275,8 +278,13 @@ pub fn load_rules(rules_path: Option<&str>) -> Result<ClassifyRules> {
                 })
         }
         None => {
-            info!("未找到分类规则配置文件，使用内置默认规则");
-            default_rules_as_raw()
+            info!("未找到分类规则配置文件，使用编译时嵌入的规则");
+            // 优先使用 compile-time 嵌入的 classify_rules.yaml
+            serde_yaml::from_str::<RawRules>(EMBEDDED_RULES_YAML)
+                .unwrap_or_else(|e| {
+                    warn!("嵌入规则解析失败: {}，回退到硬编码默认规则", e);
+                    default_rules_as_raw()
+                })
         }
     };
 

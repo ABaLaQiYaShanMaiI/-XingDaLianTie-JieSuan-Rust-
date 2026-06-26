@@ -112,6 +112,8 @@ pub struct SettlementData {
     pub pdf_path: Option<String>,
     /// 是否来自 OCR
     pub from_ocr: bool,
+    /// 原始 PDF 文本内容（用于 --dump-text）
+    pub raw_text: String,
 }
 
 impl SettlementData {
@@ -131,9 +133,10 @@ impl SettlementData {
             pdf_stated_total: None,
             amount_match: true,
             amount_deviation_pct: 0.0,
-            pdf_path: None,
-            from_ocr: false,
-        }
+        pdf_path: None,
+        from_ocr: false,
+        raw_text: String::new(),
+    }
     }
 
     /// 计算汇总金额

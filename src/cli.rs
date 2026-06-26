@@ -58,7 +58,7 @@ pub struct Cli {
     #[arg(long = "no-summary", default_value_t = false)]
     pub no_summary: bool,
 
-    /// 自定义输出文件名
+    /// 自定义输出文件名（单文件模式为精确文件名，批量模式作为前缀_001/002...）
     #[arg(long = "name")]
     pub name: Option<String>,
 }
@@ -98,16 +98,22 @@ pub fn process_single(
     let rules = load_rules(rules_path)?;
     let excel_style = load_excel_style();
 
+    // 创建输出目录（提前，供 dump-text 和 Excel 共用）
+    let out_dir = PathBuf::from(output_dir.unwrap_or("."));
+    std::fs::create_dir_all(&out_dir)
+        .map_err(|e| XingDaError::Parse(format!("无法创建输出目录: {}", e)))?;
+
     // --- 1. 解析 PDF ---
     let mut data = parse_pdf(pdf_path)?;
 
     // 导出原始文本（调试用）
     if dump_text {
-        let txt_path = pdf_p.with_extension("txt");
-        if let Ok(ref full_text) = std::fs::read_to_string(pdf_path) {
-            // 需要重新获取文本 - 这里从 pdf-extract 得到的内容已在 parse_pdf 中
-            info!("原始文本导出功能: 解析时已记录 {:?}", pdf_path);
-        }
+        let txt_filename = pdf_p.with_extension("txt").file_name()
+            .ok_or_else(|| XingDaError::Parse("PDF文件名无法解析".into()))?;
+        let txt_out = out_dir.join(txt_filename);
+        std::fs::write(&txt_out, &data.raw_text)
+            .map_err(|e| XingDaError::Parse(format!("写入文本文件失败 {}: {}", txt_out.display(), e)))?;
+        info!("原始文本已导出: {}", txt_out.display());
     }
 
     // --- 2. 分类 ---
@@ -128,10 +134,6 @@ pub fn process_single(
     }
 
     // --- 4. 生成 Excel ---
-    let out_dir = PathBuf::from(output_dir.unwrap_or("."));
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|e| XingDaError::ExcelWrite(format!("无法创建输出目录: {}", e)))?;
-
     let excel_name = if let Some(name) = output_name {
         let mut n = name.to_string();
         if !n.ends_with(".xlsx") {
@@ -168,6 +170,7 @@ pub fn process_single(
 }
 
 /// 批量处理目录下的所有 PDF 文件
+/// --name 在批量模式下作为前缀使用，每个文件生成 `name_001.xlsx` `name_002.xlsx` ... 避免覆盖
 pub fn batch_process(
     input_dir: &str,
     output_dir: Option<&str>,
@@ -193,10 +196,23 @@ pub fn batch_process(
     }
 
     pdf_files.sort();
-    info!("发现 {} 个 PDF 文件", pdf_files.len());
+    let total = pdf_files.len();
+    info!("发现 {} 个 PDF 文件", total);
 
-    for pdf_file in &pdf_files {
+    // 计算序号宽度（用于零填充）
+    let index_width = if total > 0 { ((total as f64).log10().floor() as usize) + 1 } else { 1 };
+
+    for (i, pdf_file) in pdf_files.iter().enumerate() {
         let pdf_path = pdf_file.to_str().unwrap_or("");
+
+        // 批量模式下，如果指定了 --name，作为前缀加序号
+        let batch_name: Option<String> = if let Some(base_name) = output_name {
+            let stem = base_name.trim_end_matches(".xlsx");
+            Some(format!("{}_{:0width$}.xlsx", stem, i + 1, width = index_width))
+        } else {
+            None // 使用默认命名（各 PDF 文件名+明细）
+        };
+
         match process_single(
             pdf_path,
             output_dir,
@@ -204,19 +220,22 @@ pub fn batch_process(
             validate_only,
             dump_text,
             include_summary,
-            output_name,
+            batch_name.as_deref(),
         ) {
             Ok(result) => {
                 if result.is_empty() {
-                    info!("  ✅ {} 校验完成（未生成文件）", pdf_file.file_name().unwrap_or_default().to_str().unwrap_or(""));
+                    info!("  ✅ {} 校验完成（未生成文件）",
+                        pdf_file.file_name().unwrap_or_default().to_str().unwrap_or(""));
                 } else {
                     let filename = Path::new(&result).file_name().and_then(|s| s.to_str()).unwrap_or("");
                     results.push(result);
-                    info!("  ✅ {} → {}", pdf_file.file_name().unwrap_or_default().to_str().unwrap_or(""), filename);
+                    info!("  ✅ {} → {}",
+                        pdf_file.file_name().unwrap_or_default().to_str().unwrap_or(""), filename);
                 }
             }
             Err(e) => {
-                let err_msg = format!("  ❌ {}: {}", pdf_file.file_name().unwrap_or_default().to_str().unwrap_or(""), e);
+                let err_msg = format!("  ❌ {}: {}",
+                    pdf_file.file_name().unwrap_or_default().to_str().unwrap_or(""), e);
                 errors.push(err_msg.clone());
                 error!("{}", err_msg);
             }
