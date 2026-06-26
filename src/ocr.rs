@@ -65,12 +65,20 @@ fn find_ghostscript() -> Option<PathBuf> {
             return Some(p.to_path_buf());
         }
     }
-    // 2. 直接尝试 PATH 中查找
+
+    // 2. EXE 同目录 tools/ 便携版（优先）
+    if let Some(tools_path) = tools_dir_gs() {
+        if tools_path.exists() {
+            return Some(tools_path);
+        }
+    }
+
+    // 3. 直接尝试 PATH 中查找
     if let Some(found) = which_cmd(GS_EXE) {
         return Some(found);
     }
 
-    // 2. 扫描常见安装目录
+    // 4. 扫描常见安装目录
     let candidate_dirs = [
         r"C:\Program Files\gs",
         r"C:\Program Files (x86)\gs",
@@ -94,6 +102,17 @@ fn find_ghostscript() -> Option<PathBuf> {
     }
 
     None
+}
+
+/// 检查 EXE 同级 tools/ 目录下的 Ghostscript 便携版
+#[cfg(target_os = "windows")]
+fn tools_dir_gs() -> Option<PathBuf> {
+    let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    let candidates = [
+        exe_dir.join("tools").join(GS_EXE),
+        exe_dir.join(GS_EXE),
+    ];
+    candidates.into_iter().find(|p| p.exists())
 }
 
 #[cfg(target_os = "macos")]
@@ -156,10 +175,27 @@ const TESSERACT_EXE: &str = "tesseract";
 /// Tesseract 候选安装路径（Windows）
 #[cfg(target_os = "windows")]
 fn find_tesseract() -> Option<PathBuf> {
+    // 1. 检查环境变量
+    if let Ok(path) = std::env::var("TESSERACT_PATH") {
+        let p = Path::new(&path);
+        if p.exists() {
+            return Some(p.to_path_buf());
+        }
+    }
+
+    // 2. EXE 同目录 tools/ 便携版（优先）
+    if let Some(tools_path) = tools_dir_tesseract() {
+        if tools_path.exists() {
+            return Some(tools_path);
+        }
+    }
+
+    // 3. 直接尝试 PATH 中查找
     if let Some(found) = which_cmd(TESSERACT_EXE) {
         return Some(found);
     }
 
+    // 4. 扫描常见安装目录
     let candidates = [
         r"C:\Program Files\Tesseract-OCR\tesseract.exe",
         r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
@@ -172,6 +208,17 @@ fn find_tesseract() -> Option<PathBuf> {
     }
 
     None
+}
+
+/// 检查 EXE 同级 tools/ 目录下的 Tesseract 便携版
+#[cfg(target_os = "windows")]
+fn tools_dir_tesseract() -> Option<PathBuf> {
+    let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    let candidates = [
+        exe_dir.join("tools").join(TESSERACT_EXE),
+        exe_dir.join(TESSERACT_EXE),
+    ];
+    candidates.into_iter().find(|p| p.exists())
 }
 
 #[cfg(target_os = "macos")]

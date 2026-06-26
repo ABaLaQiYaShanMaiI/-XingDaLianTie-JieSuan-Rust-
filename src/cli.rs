@@ -34,9 +34,9 @@ pub struct Cli {
     #[arg(short = 'd', long = "directory", value_hint = ValueHint::DirPath)]
     pub directory: Option<String>,
 
-    /// 输出目录
-    #[arg(short = 'o', long = "output", value_hint = ValueHint::DirPath, default_value = ".")]
-    pub output: String,
+    /// 输出目录（默认桌面）
+    #[arg(short = 'o', long = "output", value_hint = ValueHint::DirPath)]
+    pub output: Option<String>,
 
     /// 分类规则配置文件路径（YAML 格式）
     #[arg(long = "rules", value_hint = ValueHint::FilePath)]
@@ -217,9 +217,15 @@ pub fn process_single(
             .file_name()
             .ok_or_else(|| XingDaError::Parse("PDF文件名无法解析".into()))?;
         let txt_out = out_dir.join(txt_filename);
-        std::fs::write(&txt_out, &data.raw_text)
+        let header = format!(
+            "=== PDF 原始文本导出 ===\n文件: {}\n提取字符数: {}\n=========================\n\n",
+            pdf_path,
+            data.raw_text.len()
+        );
+        let content = header + &data.raw_text;
+        std::fs::write(&txt_out, &content)
             .map_err(|e| XingDaError::Parse(format!("写入文本文件失败 {}: {}", txt_out.display(), e)))?;
-        info!("原始文本已导出: {}", txt_out.display());
+        info!("原始文本已导出: {} ({} 字符)", txt_out.display(), data.raw_text.len());
     }
 
     // --- 2. 分类 ---
@@ -422,10 +428,14 @@ pub fn run_cli() -> Result<()> {
         ..Default::default()
     };
 
+    let output_dir = cli.output.or_else(|| {
+        dirs::desktop_dir().map(|p| p.to_string_lossy().to_string())
+    });
+
     if let Some(ref dir) = cli.directory {
         batch_process(
             dir,
-            Some(&cli.output),
+            output_dir.as_deref(),
             cli.rules.as_deref(),
             cli.validate_only,
             cli.dump_text,
@@ -440,7 +450,7 @@ pub fn run_cli() -> Result<()> {
     } else if let Some(ref pdf) = cli.pdf {
         let output = process_single(
             pdf,
-            Some(&cli.output),
+            output_dir.as_deref(),
             cli.rules.as_deref(),
             cli.validate_only,
             cli.dump_text,

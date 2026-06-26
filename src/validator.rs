@@ -105,6 +105,22 @@ pub fn generate_validation_summary(data: &SettlementData) -> String {
         parts.push(format!("当月结算费用: ¥{:.2}", settlement));
     }
 
+    // 区域明细
+    if !data.areas.is_empty() {
+        parts.push("\n区域明细:".to_string());
+        for (area_name, area_data) in &data.areas {
+            if !area_data.records.is_empty() {
+                parts.push(format!(
+                    "  {}: {} 条, 小计 ¥{:.2}, 事业部 ¥{:.2}",
+                    area_name,
+                    area_data.records.len(),
+                    area_data.subtotal,
+                    area_data.dept_amount
+                ));
+            }
+        }
+    }
+
     parts.join("\n")
 }
 
