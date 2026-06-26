@@ -9,13 +9,7 @@ use crate::models::{AssessmentRecord, AreaData, SettlementData};
 pub fn classify_records(data: &mut SettlementData, rules: &ClassifyRules) {
     let department_ratio = rules.department_ratio;
 
-    // 初始化 AreaData（遍历所有配置的区域规则）
-    for area_cfg in &rules.areas {
-        let name = area_cfg.name.clone();
-        data.areas.entry(name.clone()).or_insert_with(|| AreaData::new(name));
-    }
-
-    // 逐条分类
+    // 逐条分类（AreaData 在分类时动态创建，无需预分配）
     for i in 0..data.all_records.len() {
         let area_name = classify_one(&data.all_records[i], &rules.areas);
         data.all_records[i].area = area_name.clone();
@@ -115,9 +109,9 @@ mod tests {
     use super::*;
     use crate::config::AreaRule;
 
-    // 以下规则仅用于单元测试，若业务规则变动需同步更新
+    /// 使用 compile_regexes() 构建测试规则，确保与生产代码逻辑一致
     fn test_rules() -> Vec<AreaRule> {
-        vec![
+        let mut areas = vec![
             AreaRule {
                 name: "事业部".into(),
                 priority: 1,
@@ -126,10 +120,7 @@ mod tests {
                 equipment_prefixes: vec![],
                 description_patterns: vec!["协力安全管理工作方案.*落实".into(), "合同评价.*排名".into()],
                 compiled_equipment_re: vec![],
-                compiled_pattern_re: vec![
-                    regex::Regex::new("协力安全管理工作方案.*落实").unwrap(),
-                    regex::Regex::new("合同评价.*排名").unwrap(),
-                ],
+                compiled_pattern_re: vec![],
             },
             AreaRule {
                 name: "供矿作业区".into(),
@@ -148,7 +139,7 @@ mod tests {
                 keywords: vec!["煤库".into(), "原煤仓".into(), "原煤".into(), "卸煤间".into()],
                 equipment_prefixes: vec!["M".into()],
                 description_patterns: vec![],
-                compiled_equipment_re: vec![regex::Regex::new(r"M\d+").unwrap()],
+                compiled_equipment_re: vec![],
                 compiled_pattern_re: vec![],
             },
             AreaRule {
@@ -158,10 +149,7 @@ mod tests {
                 keywords: vec!["原料分厂".into(), "输入作业区".into(), "原料班".into()],
                 equipment_prefixes: vec!["B".into(), "E".into(), "F".into(), "K".into(), "N".into(), "C".into()],
                 description_patterns: vec![],
-                compiled_equipment_re: vec![
-                    regex::Regex::new(r"B\d+").unwrap(),
-                    regex::Regex::new(r"E\d+").unwrap(),
-                ],
+                compiled_equipment_re: vec![],
                 compiled_pattern_re: vec![],
             },
             AreaRule {
@@ -174,7 +162,11 @@ mod tests {
                 compiled_equipment_re: vec![],
                 compiled_pattern_re: vec![],
             },
-        ]
+        ];
+        for area in &mut areas {
+            area.compile_regexes().unwrap();
+        }
+        areas
     }
 
     #[test]

@@ -100,7 +100,7 @@ pub fn generate_validation_summary(data: &SettlementData) -> String {
 
     if data.work_fee > 0.0 {
         parts.push(format!("作业费用: ¥{:.2}", data.work_fee));
-        let settlement = data.get_settlement_amount();
+        let settlement = data.settlement_amount_or_computed();
         parts.push(format!("当月结算费用: ¥{:.2}", settlement));
     }
 

@@ -149,7 +149,7 @@ pub fn generate_excel(
     }
 
     // --- 3. 校验失败警告行 ---
-    if !data.amount_match {
+    if !data.amount_match && current_row > 0 {
         current_row += 1;
         let warning_text = format!(
             "⚠ 金额校验失败：PDF 声明合计 ¥{:.2}，程序提取合计 ¥{:.2}，偏差 {:.2}%",
@@ -210,7 +210,7 @@ fn write_summary_section(
         ("作业费用".to_string(), data.work_fee),
         ("考核金额合计".to_string(), data.total_assessment),
         ("嘉奖金额合计".to_string(), data.total_reward),
-        ("当月结算费用".to_string(), data.get_settlement_amount()),
+        ("当月结算费用".to_string(), data.settlement_amount_or_computed()),
     ];
 
     for (label, value) in &fee_items {

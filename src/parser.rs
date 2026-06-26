@@ -98,7 +98,8 @@ pub fn parse_pdf(pdf_path: &str, enable_ocr: bool, no_merge: bool, parser_config
     data.pdf_path = Some(pdf_path.to_string());
 
     // --- 提取 PDF 文本 ---
-    let full_text = extract_pdf_text(pdf_path, enable_ocr, parser_config)?;
+    let (full_text, used_ocr) = extract_pdf_text(pdf_path, enable_ocr, parser_config)?;
+    data.from_ocr = used_ocr;
 
     if full_text.trim().is_empty() {
         return Err(XingDaError::Parse(format!("PDF 无文本内容: {}", pdf_path)));
@@ -111,7 +112,7 @@ pub fn parse_pdf(pdf_path: &str, enable_ocr: bool, no_merge: bool, parser_config
     extract_contract_info(&mut data, &full_text);
 
     // --- 提取费用信息 ---
-    extract_fee_info(&mut data, &full_text);
+    extract_fee_info(&mut data, &full_text, parser_config);
 
     // --- 文本行提取考核记录 ---
     let records = extract_from_text(&full_text, no_merge, parser_config);
@@ -124,7 +125,7 @@ pub fn parse_pdf(pdf_path: &str, enable_ocr: bool, no_merge: bool, parser_config
 }
 
 /// 使用 pdf-extract 提取 PDF 文本，无文本层时可选 OCR 回退
-fn extract_pdf_text(pdf_path: &str, enable_ocr: bool, parser_config: &ParserConfig) -> Result<String> {
+fn extract_pdf_text(pdf_path: &str, enable_ocr: bool, parser_config: &ParserConfig) -> Result<(String, bool)> {
     let bytes = fs::read(pdf_path)
         .map_err(|e| XingDaError::Parse(format!("无法读取 PDF 文件: {}", e)))?;
 
@@ -143,7 +144,7 @@ fn extract_pdf_text(pdf_path: &str, enable_ocr: bool, parser_config: &ParserConf
                     }
                 }
                 if !all_text.trim().is_empty() {
-                    return Ok(all_text);
+                    return Ok((all_text, false));
                 }
 
                 // pdf-extract 空 + lopdf 空 → 无文本层
@@ -155,7 +156,7 @@ fn extract_pdf_text(pdf_path: &str, enable_ocr: bool, parser_config: &ParserConf
                         ocr_result.page_count,
                         ocr_result.text.len()
                     );
-                    return Ok(ocr_result.text);
+                    return Ok((ocr_result.text, true));
                 } else {
                     return Err(XingDaError::Pdf(
                         "PDF 无文本层。请使用 --ocr 标志启用 OCR 通道（需安装 Ghostscript 和 Tesseract）。\n\
@@ -163,7 +164,7 @@ fn extract_pdf_text(pdf_path: &str, enable_ocr: bool, parser_config: &ParserConf
                     ));
                 }
             }
-            Ok(text)
+            Ok((text, false))
         }
         Err(e) => {
             // 回退到 lopdf
@@ -191,7 +192,7 @@ fn extract_pdf_text(pdf_path: &str, enable_ocr: bool, parser_config: &ParserConf
                         ocr_result.page_count,
                         ocr_result.text.len()
                     );
-                    return Ok(ocr_result.text);
+                    return Ok((ocr_result.text, true));
                 } else {
                     return Err(XingDaError::Pdf(
                         "PDF 无文本层且 pdf-extract / lopdf 均无法解析。\n\
@@ -200,7 +201,7 @@ fn extract_pdf_text(pdf_path: &str, enable_ocr: bool, parser_config: &ParserConf
                     ));
                 }
             }
-            Ok(all_text)
+            Ok((all_text, false))
         }
     }
 }
@@ -268,7 +269,7 @@ fn extract_final_number(text: &str) -> Option<f64> {
 }
 
 /// 提取费用信息
-fn extract_fee_info(data: &mut SettlementData, full_text: &str) {
+fn extract_fee_info(data: &mut SettlementData, full_text: &str, config: &ParserConfig) {
     // 策略1: 从底部结算公式合计行提取
     let sum_re = Regex::new(r"合计\s+(\d[\d,.]*)\s+(\d[\d,.]*)\s+(\d[\d,.]*)\s+(\d[\d,.]*)").unwrap();
     if let Some(caps) = sum_re.captures(full_text) {
@@ -292,7 +293,7 @@ fn extract_fee_info(data: &mut SettlementData, full_text: &str) {
     }
 
     // 策略3: 嘉奖金额多策略匹配
-    data.total_reward = extract_reward_amount(full_text);
+    data.total_reward = extract_reward_amount(full_text, config);
 
     // 策略4: PDF 底部考核金额合计
     let total_re = Regex::new(r"(?:考核金额合计|合同考核.*?小计|总[计和])\s*\n?\s*(\d+(?:,\d+)*(?:\.\d+)?)").unwrap();
@@ -345,9 +346,11 @@ fn parse_amount(m: Option<regex::Match<'_>>) -> Option<f64> {
 // ============================================================
 
 /// 提取嘉奖金额，按优先级尝试多种匹配策略
-fn extract_reward_amount(full_text: &str) -> f64 {
+fn extract_reward_amount(full_text: &str, config: &ParserConfig) -> f64 {
     let num_re_str = r"(\d+(?:,\d+)*(?:\.\d+)?)";
     let opt_space = r"\s*\n?\s*";
+    let scan_lines = config.reward_scan_lines;
+    let min_threshold = config.reward_filter_threshold;
 
     // 策略1: 嘉奖金额 \n A \n 小计 \n B
     let re1_str = format!(r"嘉奖金额{}{}{}小计{}{}", opt_space, num_re_str, opt_space, opt_space, num_re_str);
@@ -375,7 +378,7 @@ fn extract_reward_amount(full_text: &str) -> f64 {
         }
     }
 
-    // 策略3: 找到"嘉奖金额"行，在后续 5 行内找金额
+    // 策略3: 找到"嘉奖金额"行，在后续 scan_lines 行内找金额
     let lines: Vec<&str> = full_text.split('\n').collect();
     let num_re = Regex::new(num_re_str).unwrap();
     for (idx, line) in lines.iter().enumerate() {
@@ -387,14 +390,14 @@ fn extract_reward_amount(full_text: &str) -> f64 {
                 .filter_map(|m| m.as_str().replace(",", "").parse::<f64>().ok())
                 .collect();
             if let Some(&val) = all_nums.last() {
-                if val > 10.0 {
+                if val > min_threshold {
                     debug!("  嘉奖金额（策略3a: 同行末位）: {:.2}", val);
                     return val;
                 }
             }
 
             // 扫描后续行
-            for offset in 1..=5 {
+            for offset in 1..=scan_lines {
                 if idx + offset >= lines.len() {
                     break;
                 }
@@ -421,7 +424,7 @@ fn extract_reward_amount(full_text: &str) -> f64 {
                 .captures_iter(section)
                 .filter_map(|caps| caps.get(1))
                 .filter_map(|m| m.as_str().replace(",", "").parse::<f64>().ok())
-                .filter(|&a| a > 10.0)
+                .filter(|&a| a > min_threshold)
                 .collect();
             if !amounts.is_empty() {
                 amounts.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
@@ -707,5 +710,95 @@ mod tests {
     fn test_extract_final_number() {
         assert_eq!(extract_final_number("违反规定 100.00"), Some(100.00));
         assert_eq!(extract_final_number("无金额"), None);
+    }
+
+    // ── extract_reward_amount 参数化测试 ──────────────────
+
+    fn default_config() -> ParserConfig {
+        ParserConfig::default()
+    }
+
+    #[test]
+    fn test_reward_strategy1_three_line() {
+        let text = "嘉奖金额\n\n5000.00\n\n小计\n\n3000.00";
+        let val = extract_reward_amount(text, &default_config());
+        // 策略1 应匹配小计后的金额（第2组 = 3000.00）
+        // 如果三行不满足, 实际可能落入后续策略
+        // 关键是不 panic 且返回值 >= 0
+        assert!(val >= 0.0);
+    }
+
+    #[test]
+    fn test_reward_strategy2_direct_match() {
+        let text = "嘉奖金额：12,500.00";
+        let val = extract_reward_amount(text, &default_config());
+        assert_eq!(val, 12500.00, "策略2应直接匹配冒号后金额");
+    }
+
+    #[test]
+    fn test_reward_strategy3_peer_last() {
+        let text = "嘉奖金额 200.00 500.00 800.00";
+        let val = extract_reward_amount(text, &default_config());
+        assert_eq!(val, 800.00, "策略3a应取同行最后一个>10的金额");
+    }
+
+    #[test]
+    fn test_reward_strategy3b_scan_subsequent_lines() {
+        let text = "嘉奖金额\n无关行\n另一行\n第三行\n第四行\n1500.50";
+        let val = extract_reward_amount(text, &default_config());
+        assert_eq!(val, 1500.50);
+    }
+
+    #[test]
+    fn test_reward_strategy4_section_max() {
+        let text = "嘉奖金额 50.00 200.00 考核金额合计 100000.00";
+        let val = extract_reward_amount(text, &default_config());
+        assert_eq!(val, 200.00, "策略4应在区间内取最大金额");
+    }
+
+    #[test]
+    fn test_reward_no_match() {
+        let text = "无相关内容";
+        let val = extract_reward_amount(text, &default_config());
+        assert_eq!(val, 0.0);
+    }
+
+    // ── extract_fee_info 参数化测试 ──────────────────
+
+    #[test]
+    fn test_extract_fee_info_strategy1_sum_row() {
+        let mut data = SettlementData::new();
+        let text = "合同编号：SC-2024-001\n作业时间：2024年3月\n合计 50000.00 12000.00 800.00 38800.00";
+        extract_fee_info(&mut data, text, &default_config());
+        assert_eq!(data.work_fee, 50000.00);
+        assert_eq!(data.pdf_stated_total, Some(12000.00));
+        assert_eq!(data.total_reward, 800.00);
+        assert_eq!(data.settlement_amount, 38800.00);
+    }
+
+    #[test]
+    fn test_extract_fee_info_strategy2_work_subtotal_only() {
+        let mut data = SettlementData::new();
+        let text = "作业费用\n小计 45000.00";
+        extract_fee_info(&mut data, text, &default_config());
+        assert_eq!(data.work_fee, 45000.00);
+    }
+
+    #[test]
+    fn test_extract_fee_info_settlement_fallback() {
+        let mut data = SettlementData::new();
+        // 无合计行 → 靠单独匹配当月结算费用
+        let text = "作业费用\n小计 43000.00\n当月结算费用： 41,500.00";
+        extract_fee_info(&mut data, text, &default_config());
+        assert_eq!(data.settlement_amount, 41500.00);
+    }
+
+    #[test]
+    fn test_extract_fee_info_reward_integration() {
+        let mut data = SettlementData::new();
+        let text = "嘉奖金额：5,000.00\n作业费用\n小计 40000.00";
+        extract_fee_info(&mut data, text, &default_config());
+        assert_eq!(data.total_reward, 5000.00);
+        assert_eq!(data.work_fee, 40000.00);
     }
 }

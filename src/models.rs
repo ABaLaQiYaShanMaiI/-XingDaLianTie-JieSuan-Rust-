@@ -112,10 +112,10 @@ impl SettlementData {
             pdf_stated_total: None,
             amount_match: true,
             amount_deviation_pct: 0.0,
-        pdf_path: None,
-        from_ocr: false,
-        raw_text: String::new(),
-    }
+            pdf_path: None,
+            from_ocr: false,
+            raw_text: String::new(),
+        }
     }
 
     /// 计算汇总金额
@@ -126,6 +126,15 @@ impl SettlementData {
     /// 当月结算费用 = 作业费用 - 考核金额合计 + 嘉奖金额合计
     pub fn get_settlement_amount(&self) -> f64 {
         self.work_fee - self.total_assessment + self.total_reward
+    }
+
+    /// 获取当月结算费用（优先使用 PDF 提取值，回退到计算值）
+    pub fn settlement_amount_or_computed(&self) -> f64 {
+        if self.settlement_amount > 0.0 {
+            self.settlement_amount
+        } else {
+            self.get_settlement_amount()
+        }
     }
 }
 

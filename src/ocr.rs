@@ -291,13 +291,21 @@ pub struct OcrResult {
 ///
 /// # 参数
 /// - `pdf_path`: PDF 文件路径
-/// - `config`: 解析器配置（DPI、语言、PSM 模式等）
+/// - `config`: 解析器配置（OCR引擎、DPI、语言、PSM 模式等）
 ///
 /// # 流程
 /// 1. 使用 Ghostscript 将 PDF 每页转为 PNG
 /// 2. 对每张 PNG 并行调用 Tesseract 识别文字
 /// 3. 合并所有页面文本
 pub fn perform_ocr(pdf_path: &str, config: &ParserConfig) -> Result<OcrResult> {
+    // 根据配置的 OCR 引擎分发
+    match config.ocr_engine {
+        crate::config::OcrEngine::Tesseract => perform_ocr_tesseract(pdf_path, config),
+    }
+}
+
+/// 使用 Tesseract OCR 引擎提取文本
+fn perform_ocr_tesseract(pdf_path: &str, config: &ParserConfig) -> Result<OcrResult> {
     let ocr_start = Instant::now();
 
     let gs_path = find_ghostscript()
@@ -314,6 +322,7 @@ pub fn perform_ocr(pdf_path: &str, config: &ParserConfig) -> Result<OcrResult> {
         ))?;
 
     info!("OCR 管线初始化:");
+    info!("  引擎:        Tesseract");
     info!("  Ghostscript: {}", gs_path.display());
     info!("  Tesseract:   {}", tesseract_path.display());
     info!("  DPI:         {}", config.ocr_dpi);
