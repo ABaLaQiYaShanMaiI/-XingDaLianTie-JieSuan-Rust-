@@ -5,19 +5,13 @@ use std::collections::BTreeMap;
 /// 考核记录
 #[derive(Debug, Clone)]
 pub struct AssessmentRecord {
-    /// 序号
     pub index: i32,
-    /// 考核事项描述
     pub description: String,
-    /// 条款
     pub clause: String,
-    /// 考核金额
     pub amount: f64,
-    /// 归属作业区
     pub area: String,
     /// 解析来源: "table" 或 "text"
     pub parse_source: String,
-    /// 解析警告
     pub parse_warnings: Vec<String>,
 }
 
@@ -38,13 +32,9 @@ impl AssessmentRecord {
 /// 作业区数据
 #[derive(Debug, Clone)]
 pub struct AreaData {
-    /// 区域名称
     pub name: String,
-    /// 考核记录列表
     pub records: Vec<AssessmentRecord>,
-    /// 小计
     pub subtotal: f64,
-    /// 事业部考核金额
     pub dept_amount: f64,
 }
 
@@ -58,7 +48,6 @@ impl AreaData {
         }
     }
 
-    /// 添加考核记录
     pub fn add_record(&mut self, record: AssessmentRecord) {
         self.records.push(record);
     }
@@ -75,25 +64,16 @@ impl AreaData {
 /// 结算单完整数据
 #[derive(Debug, Clone)]
 pub struct SettlementData {
-    /// 合同编号
     pub contract_no: String,
-    /// 合同名称
     pub contract_name: String,
-    /// 作业时间
     pub work_period: String,
-    /// 月份标签
     pub month_label: String,
 
-    /// 作业费用
     pub work_fee: f64,
-    /// 考核金额合计
     pub total_assessment: f64,
-    /// 嘉奖金额合计
     pub total_reward: f64,
-    /// 当月结算费用
     pub settlement_amount: f64,
 
-    /// 全部考核记录
     pub all_records: Vec<AssessmentRecord>,
     /// 被过滤的记录及原因
     pub filtered_records: Vec<(AssessmentRecord, String)>,

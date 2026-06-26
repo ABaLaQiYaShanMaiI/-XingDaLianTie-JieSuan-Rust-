@@ -626,68 +626,6 @@ fn build_text_record(lines: &[String], config: &ParserConfig) -> Option<Assessme
 }
 
 // ============================================================
-// 合并去重（当有表格通道时使用）
-// ============================================================
-
-/// 合并两个通道的结果并去重
-///
-/// 预留：当同时启用表格和文本解析通道时用于合并结果。
-#[allow(dead_code)]
-pub fn merge_deduplicate(
-    table_records: &[AssessmentRecord],
-    text_records: &[AssessmentRecord],
-) -> Vec<AssessmentRecord> {
-    if table_records.is_empty() {
-        return text_records.to_vec();
-    }
-
-    // 以序号为键建立查找表
-    let mut table_map: std::collections::BTreeMap<i32, Vec<&AssessmentRecord>> = std::collections::BTreeMap::new();
-    for r in table_records {
-        table_map.entry(r.index).or_default().push(r);
-    }
-
-    let mut result: Vec<AssessmentRecord> = table_records.to_vec();
-
-    for text_r in text_records {
-        if let Some(existing) = table_map.get(&text_r.index) {
-            // 检查金额是否过小（疑似条款编号）
-            let too_small = existing.iter().any(|e| e.amount > 0.0 && text_r.amount < e.amount * 0.1);
-            if too_small {
-                debug!(
-                    "  文本记录疑似条款编号（金额过小），跳过: 序号 {} ¥{} vs ¥{}",
-                    text_r.index, text_r.amount, existing[0].amount
-                );
-                continue;
-            }
-
-            // 比较描述长度，取更完整的
-            if !text_r.description.is_empty() {
-                // 找到对应的可变引用
-                if let Some(existing_record) = result.iter_mut().find(|r| r.index == text_r.index) {
-                    if text_r.description.len() > existing_record.description.len() {
-                        existing_record.description = text_r.description.clone();
-                        if !text_r.clause.is_empty() {
-                            existing_record.clause = text_r.clause.clone();
-                        }
-                        existing_record.parse_source = "merged".to_string();
-                        debug!("  文本通道补充描述: 序号 {}", text_r.index);
-                    }
-                }
-            }
-        } else {
-            // 表格通道没有的记录，补充
-            let mut new_record = text_r.clone();
-            new_record.parse_source = "text_only".to_string();
-            result.push(new_record);
-            debug!("  文本通道补充: 序号 {}", text_r.index);
-        }
-    }
-
-    result
-}
-
-// ============================================================
 // 单元测试
 // ============================================================
 

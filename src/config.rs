@@ -333,7 +333,6 @@ fn default_rules_as_raw() -> RawRules {
 }
 
 fn build_rules_from_raw(raw: RawRules) -> Result<ClassifyRules> {
-    // 处理 areas
     let mut areas: Vec<AreaRule> = match raw.areas {
         Some(raw_areas) => raw_areas
             .into_iter()
@@ -370,7 +369,6 @@ fn build_rules_from_raw(raw: RawRules) -> Result<ClassifyRules> {
         }
     };
 
-    // 按 priority 排序
     areas.sort_by_key(|a| a.priority);
 
     // 确保有兜底规则（未分类）
@@ -388,7 +386,6 @@ fn build_rules_from_raw(raw: RawRules) -> Result<ClassifyRules> {
         });
     }
 
-    // 编译正则
     for area in &mut areas {
         area.compile_regexes()?;
     }
