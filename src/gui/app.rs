@@ -1,81 +1,54 @@
-//! 图形化界面 (egui/eframe)：文件选择、PDF 处理、实时日志、拖拽、环境检测。
-
+//! GUI 应用状态与核心逻辑
 
 use std::sync::mpsc;
 use std::thread;
 
 use eframe::egui;
-use log::{info, warn};
+use log::info;
 
+use super::components::{LogMessage, ToolStatus, detect_ghostscript, detect_tesseract};
 use crate::cli::process_pdf_core;
-use crate::config::StylePreset;
+use crate::config::{ParserConfig, StylePreset};
 use crate::excel_writer::generate_excel;
-use crate::config::ParserConfig;
 use crate::validator::generate_validation_summary;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// 日志消息类型
-#[derive(Debug, Clone)]
-enum LogMessage {
-    Info(String),
-    Success(String),
-    Warning(String),
-    Error(String),
-}
-
-/// 外部工具检测状态
-#[derive(Debug, Clone, PartialEq)]
-enum ToolStatus {
-    /// 已检测到
-    Found(String),
-    /// 未检测到
-    NotFound,
-    /// 未检测（初始状态）
-    Unknown,
-}
-
-impl ToolStatus {
-    fn is_found(&self) -> bool {
-        matches!(self, ToolStatus::Found(_))
-    }
-}
-
 /// GUI 应用状态
-struct XingDaApp {
+pub struct XingDaApp {
     // 文件路径
-    pdf_path: String,
-    output_dir: String,
-    rules_path: String,
+    pub pdf_path: String,
+    pub output_dir: String,
+    pub rules_path: String,
 
     // 选项
-    validate_only: bool,
-    dump_text: bool,
-    no_summary: bool,
-    enable_ocr: bool,
-    summary_only: bool,
-    no_merge: bool,
-    style_preset: Option<StylePreset>,
-    log_file_path: String,
+    pub validate_only: bool,
+    pub dump_text: bool,
+    pub no_summary: bool,
+    pub enable_ocr: bool,
+    pub summary_only: bool,
+    pub no_merge: bool,
+    pub style_preset: Option<StylePreset>,
+    pub log_file_path: String,
 
     // 处理状态
-    processing: bool,
-    log_messages: Vec<LogMessage>,
+    pub processing: bool,
+    pub log_messages: Vec<LogMessage>,
 
     // 后台处理通信
     log_receiver: Option<mpsc::Receiver<LogMessage>>,
     result_receiver: Option<mpsc::Receiver<Result<String, String>>>,
 
     // 输出结果
-    last_output: Option<String>,
+    pub last_output: Option<String>,
 
     // 环境检测状态
-    ghostscript_status: ToolStatus,
-    tesseract_status: ToolStatus,
-    env_check_done: bool,
+    pub ghostscript_status: ToolStatus,
+    pub tesseract_status: ToolStatus,
+    pub env_check_done: bool,
 
     // 拖拽提示
-    drag_hover: bool,
+    pub drag_hover: bool,
 }
 
 impl Default for XingDaApp {
@@ -155,7 +128,11 @@ impl eframe::App for XingDaApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             // --- 环境检测状态 ---
             ui.collapsing("🔧 环境检测", |ui| {
-                self.render_env_status(ui);
+                super::components::render_env_status(
+                    ui,
+                    &self.ghostscript_status,
+                    &self.tesseract_status,
+                );
             });
 
             ui.separator();
@@ -239,24 +216,7 @@ impl eframe::App for XingDaApp {
                 ui.separator();
 
                 // Excel 样式预设
-                ui.horizontal(|ui| {
-                    ui.label("Excel 样式：");
-                    ui.selectable_value(
-                        &mut self.style_preset,
-                        None,
-                        "默认",
-                    );
-                    ui.selectable_value(
-                        &mut self.style_preset,
-                        Some(StylePreset::Compact),
-                        "紧凑",
-                    );
-                    ui.selectable_value(
-                        &mut self.style_preset,
-                        Some(StylePreset::Wide),
-                        "宽松",
-                    );
-                });
+                super::components::render_style_selector(ui, &mut self.style_preset);
             });
 
             // 高级选项
@@ -303,7 +263,7 @@ impl eframe::App for XingDaApp {
                 }
 
                 if ui.button("📁 打开输出目录").clicked() {
-                    self.open_output_dir();
+                    super::components::open_output_dir(&self.output_dir);
                 }
 
                 if ui.button("🔄 重新检测环境").clicked() {
@@ -362,9 +322,9 @@ impl eframe::App for XingDaApp {
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             // 工具状态快速指示器
             ui.horizontal(|ui| {
-                self.render_tool_pill(ui, "GS", &self.ghostscript_status);
+                super::components::render_tool_pill(ui, "GS", &self.ghostscript_status);
                 ui.separator();
-                self.render_tool_pill(ui, "Tesseract", &self.tesseract_status);
+                super::components::render_tool_pill(ui, "Tesseract", &self.tesseract_status);
                 ui.separator();
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if let Some(ref output) = self.last_output {
@@ -383,7 +343,7 @@ impl eframe::App for XingDaApp {
 
 impl XingDaApp {
     /// 运行环境检测
-    fn run_env_check(&mut self) {
+    pub fn run_env_check(&mut self) {
         self.ghostscript_status = detect_ghostscript();
         self.tesseract_status = detect_tesseract();
         self.env_check_done = true;
@@ -410,94 +370,8 @@ impl XingDaApp {
         }
     }
 
-    /// 渲染环境检测面板
-    fn render_env_status(&self, ui: &mut egui::Ui) {
-        ui.label("外部工具检测（用于 OCR 功能）：");
-        ui.add_space(4.0);
-
-        // Ghostscript
-        ui.horizontal(|ui| {
-            match &self.ghostscript_status {
-                ToolStatus::Found(path) => {
-                    ui.colored_label(
-                        egui::Color32::from_rgb(106, 153, 85),
-                        "✅",
-                    );
-                    ui.label(format!("Ghostscript: {}", path));
-                }
-                ToolStatus::NotFound => {
-                    ui.colored_label(
-                        egui::Color32::from_rgb(244, 71, 71),
-                        "❌",
-                    );
-                    ui.label("Ghostscript: 未安装");
-                    ui.hyperlink_to(
-                        "下载",
-                        "https://ghostscript.com/releases/gsdnld.html",
-                    );
-                }
-                ToolStatus::Unknown => {
-                    ui.colored_label(
-                        egui::Color32::GRAY,
-                        "⏳",
-                    );
-                    ui.label("Ghostscript: 检测中...");
-                }
-            }
-        });
-
-        // Tesseract
-        ui.horizontal(|ui| {
-            match &self.tesseract_status {
-                ToolStatus::Found(path) => {
-                    ui.colored_label(
-                        egui::Color32::from_rgb(106, 153, 85),
-                        "✅",
-                    );
-                    ui.label(format!("Tesseract: {}", path));
-                }
-                ToolStatus::NotFound => {
-                    ui.colored_label(
-                        egui::Color32::from_rgb(244, 71, 71),
-                        "❌",
-                    );
-                    ui.label("Tesseract: 未安装（需勾选 chi_sim 中文语言包）");
-                    ui.hyperlink_to(
-                        "下载",
-                        "https://github.com/UB-Mannheim/tesseract/wiki",
-                    );
-                }
-                ToolStatus::Unknown => {
-                    ui.colored_label(
-                        egui::Color32::GRAY,
-                        "⏳",
-                    );
-                    ui.label("Tesseract: 检测中...");
-                }
-            }
-        });
-
-        ui.add_space(4.0);
-        if !self.ghostscript_status.is_found() || !self.tesseract_status.is_found() {
-            ui.colored_label(
-                egui::Color32::from_rgb(255, 170, 60),
-                "ℹ 未安装的工具不影响普通 PDF 处理，仅 OCR 扫描件时需要。",
-            );
-        }
-    }
-
-    /// 渲染底部状态栏的工具状态指示器
-    fn render_tool_pill(&self, ui: &mut egui::Ui, label: &str, status: &ToolStatus) {
-        let (color, symbol) = match status {
-            ToolStatus::Found(_) => (egui::Color32::from_rgb(106, 153, 85), "●"),
-            ToolStatus::NotFound => (egui::Color32::from_rgb(244, 71, 71), "●"),
-            ToolStatus::Unknown => (egui::Color32::GRAY, "○"),
-        };
-        ui.colored_label(color, format!("{} {}", symbol, label));
-    }
-
     /// 开始后台处理
-    fn start_processing(&mut self) {
+    pub fn start_processing(&mut self) {
         self.processing = true;
         self.log_messages.clear();
         self.last_output = None;
@@ -595,80 +469,6 @@ impl XingDaApp {
             }
         }
     }
-
-    /// 打开输出目录（跨平台）
-    fn open_output_dir(&self) {
-        let path = if self.output_dir.is_empty() {
-            "./output".to_string()
-        } else {
-            self.output_dir.clone()
-        };
-
-        let result = {
-            #[cfg(target_os = "windows")]
-            {
-                std::process::Command::new("explorer")
-                    .arg(&path)
-                    .spawn()
-                    .map(|_| ())
-            }
-            #[cfg(target_os = "macos")]
-            {
-                std::process::Command::new("open")
-                    .arg(&path)
-                    .spawn()
-                    .map(|_| ())
-            }
-            #[cfg(target_os = "linux")]
-            {
-                let managers = ["xdg-open", "nautilus", "dolphin", "pcmanfm"];
-                let mut result = Err(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "No file manager found",
-                ));
-                for manager in &managers {
-                    if std::process::Command::new(manager)
-                        .arg(&path)
-                        .spawn()
-                        .is_ok()
-                    {
-                        result = Ok(());
-                        break;
-                    }
-                }
-                result.map(|_| ())
-            }
-            #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-            {
-                open::that(&path)
-            }
-        };
-
-        if let Err(e) = result {
-            warn!("无法打开目录: {}", e);
-            info!("请手动打开: {}", path);
-        }
-    }
-}
-
-// ============================================================
-// 环境检测函数（跨平台）
-// ============================================================
-
-/// 检测 Ghostscript 安装（委托 ocr.rs 共享逻辑）
-fn detect_ghostscript() -> ToolStatus {
-    match crate::ocr::find_ghostscript() {
-        Some(path) => ToolStatus::Found(path.to_string_lossy().into_owned()),
-        None => ToolStatus::NotFound,
-    }
-}
-
-/// 检测 Tesseract 安装（委托 ocr.rs 共享逻辑）
-fn detect_tesseract() -> ToolStatus {
-    match crate::ocr::find_tesseract() {
-        Some(path) => ToolStatus::Found(path.to_string_lossy().into_owned()),
-        None => ToolStatus::NotFound,
-    }
 }
 
 // ============================================================
@@ -696,7 +496,7 @@ fn process_in_thread(
     let parser_config = ParserConfig::default();
 
     // --- 核心处理：解析 + 分类 + 校验（复用 CLI 共享函数） ---
-    let (mut data, rules, excel_style, is_valid) = process_pdf_core(
+    let (data, rules, excel_style, is_valid) = process_pdf_core(
         pdf_path,
         rules_path,
         enable_ocr,
@@ -792,109 +592,4 @@ fn process_in_thread(
     }
 
     Ok(output_path_str.to_string())
-}
-
-// ============================================================
-// GUI 启动
-// ============================================================
-
-/// 启动 GUI
-pub fn launch_gui() {
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("兴达炼铁保产事业部 结算单明细工具")
-            .with_inner_size([680.0, 700.0])
-            .with_min_inner_size([600.0, 500.0]),
-        ..Default::default()
-    };
-
-    if let Err(e) = eframe::run_native(
-        "XingDa JieSuan",
-        options,
-        Box::new(|cc| {
-            setup_chinese_fonts(&cc.egui_ctx);
-            Ok(Box::new(XingDaApp::default()))
-        }),
-    ) {
-        eprintln!("GUI 启动失败: {}", e);
-    }
-}
-
-/// 从系统字体目录加载中文字体（跨平台）
-///
-/// 按优先级依次尝试系统常见中文字体路径，首个存在的字体即被加载并设置为默认。
-fn setup_chinese_fonts(ctx: &egui::Context) {
-    let mut fonts = egui::FontDefinitions::default();
-
-    let font_paths: Vec<&str> = {
-        #[cfg(target_os = "windows")]
-        {
-            vec![
-                r"C:\Windows\Fonts\msyh.ttc",
-                r"C:\Windows\Fonts\msyh.ttf",
-                r"C:\Windows\Fonts\simsun.ttc",
-                r"C:\Windows\Fonts\simhei.ttf",
-                r"C:\Windows\Fonts\simfang.ttf",
-            ]
-        }
-        #[cfg(target_os = "macos")]
-        {
-            vec![
-                "/Library/Fonts/STHeiti Light.ttc",
-                "/System/Library/Fonts/PingFang.ttc",
-                "/Library/Fonts/Noto Sans CJK JP/NotoSansCJKjp-Regular.otf",
-                "/Library/Fonts/SimHei.ttf",
-                "/System/Library/Fonts/STHeiti Medium.ttc",
-            ]
-        }
-        #[cfg(target_os = "linux")]
-        {
-            vec![
-                "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-                "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
-                "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-            ]
-        }
-        #[cfg(not(any(
-            target_os = "windows",
-            target_os = "macos",
-            target_os = "linux"
-        )))]
-        {
-            vec![]
-        }
-    };
-
-    let font_name = "chinese_font";
-    for path in &font_paths {
-        if let Ok(bytes) = std::fs::read(path) {
-            info!("已加载中文字体: {}", path);
-
-            fonts.font_data.insert(
-                font_name.to_owned(),
-                std::sync::Arc::new(egui::FontData::from_owned(bytes.to_vec())),
-            );
-
-            fonts
-                .families
-                .entry(egui::FontFamily::Proportional)
-                .or_default()
-                .insert(0, font_name.to_owned());
-
-            fonts
-                .families
-                .entry(egui::FontFamily::Monospace)
-                .or_default()
-                .insert(0, font_name.to_owned());
-
-            ctx.set_fonts(fonts);
-            return;
-        }
-    }
-
-    warn!("未找到系统中文字体，使用默认字体");
-    ctx.set_fonts(fonts);
 }

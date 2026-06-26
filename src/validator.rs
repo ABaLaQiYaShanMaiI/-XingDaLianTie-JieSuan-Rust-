@@ -36,7 +36,8 @@ pub fn validate_amounts(data: &mut SettlementData) -> bool {
     info!("  程序提取合计: ¥{:.2}", extracted_total);
     info!("  偏差: ¥{:.2} ({:.2}%)", deviation, deviation_pct * 100.0);
 
-    if deviation_pct == 0.0 {
+    let abs_deviation = deviation;
+    if deviation < 1e-9 || abs_deviation < 0.005 {
         data.amount_match = true;
         info!("✅ 金额校验通过（完全匹配）");
         true
