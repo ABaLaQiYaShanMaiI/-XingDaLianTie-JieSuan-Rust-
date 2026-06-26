@@ -1,12 +1,10 @@
-//! 闭环比对校验模块
-//! ================
-//! 用于验证 PDF 提取到的"考核金额合计"是否与录入的考核条目金额累加一致。
+//! 验证 PDF 提取的考核金额合计是否与录入条目累加一致。
 
 use log::{info, warn, error};
 
 use crate::models::SettlementData;
 
-/// 偏差警告阈值（±5%）
+/// 偏差警告阈值（5%，即 0.05）
 const DEVIATION_WARN_THRESHOLD: f64 = 0.05;
 
 /// 金额闭环校验
@@ -68,6 +66,7 @@ pub fn validate_amounts(data: &mut SettlementData) -> bool {
 pub fn generate_validation_summary(data: &SettlementData) -> String {
     let mut parts = Vec::new();
 
+    // 以下分隔线使用 '═' 字符，适用于等宽字体显示
     parts.push("═".repeat(50));
     parts.push("结算单校验摘要".to_string());
     parts.push("═".repeat(50));

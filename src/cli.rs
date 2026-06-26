@@ -1,6 +1,4 @@
-//! 命令行接口模块
-//! =============
-//! 提供增强的命令行参数支持。
+//! 命令行参数解析与单文件/批量处理入口。
 
 use std::path::{Path, PathBuf};
 
@@ -78,7 +76,7 @@ pub struct Cli {
     #[arg(long = "ocr-psm", default_value = "6")]
     pub ocr_psm: u8,
 
-    /// 日志文件输出路径（带轮转，每个文件最大 5MB，保留 3 个备份）
+    /// 日志文件输出路径（超过 5MB 时自动归档为 .old，仅保留一个旧文件）
     #[arg(long = "log-file", value_hint = ValueHint::FilePath)]
     pub log_file: Option<String>,
 
@@ -151,7 +149,9 @@ fn chrono_timestamp() -> String {
     )
 }
 
-/// 日志文件写入器（带 5MB 轮转）
+/// 日志文件写入器（超过 5MB 自动归档为 .old，每次 write 检查文件元数据）
+// TODO: 轮转逻辑在每次 write 中检查元数据，高频日志可能影响性能；
+//       可考虑在打开文件时记录初始长度并计数，或使用 tracing-appender 等轮转库。
 struct LogFileWriter {
     file: std::sync::Mutex<std::io::BufWriter<std::fs::File>>,
     path: String,
@@ -178,6 +178,8 @@ impl std::io::Write for LogFileWriter {
 }
 
 /// 处理单个 PDF 文件
+///
+/// `output_dir`: 如果为 `None`，默认输出到当前工作目录（"."）。
 pub fn process_single(
     pdf_path: &str,
     output_dir: Option<&str>,

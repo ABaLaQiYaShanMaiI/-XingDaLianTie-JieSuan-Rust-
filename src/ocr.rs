@@ -1,37 +1,6 @@
-//! OCR 模块（扫描型 / 图片型 PDF 支持）
-//! =====================================
-//! 当 PDF 无文本层时，通过外部工具链实现 OCR 提取文字：
-//!
-//! 工具链流程：
-//!   PDF 页面 → Ghostscript (gs) → PNG 图像 → Tesseract OCR → 文本
-//!
-//! # 外部依赖
-//!
-//! ## Windows
-//! - **Ghostscript**: 下载 gs100xw64.exe 或 gs100xw32.exe
-//!   https://ghostscript.com/releases/gsdnld.html
-//!   安装后默认路径: `C:\Program Files\gs\gs10.0x.x\bin\gswin64c.exe`
-//! - **Tesseract**: 下载安装包
-//!   https://github.com/UB-Mannheim/tesseract/wiki
-//!   安装时勾选中文简体语言包 (chi_sim)
-//!   默认路径: `C:\Program Files\Tesseract-OCR\tesseract.exe`
-//!
-//! ## Linux
-//! ```bash
-//! sudo apt install ghostscript tesseract-ocr tesseract-ocr-chi-sim
-//! ```
-//!
-//! # 使用方式
-//! ```bash
-//! xingda-jiesuan 扫描件.pdf --ocr
-//! # 自定义参数
-//! xingda-jiesuan 扫描件.pdf --ocr --ocr-dpi 600 --ocr-lang chi_sim+eng --ocr-psm 3
-//! ```
-//!
-//! 程序自动检测 PDF 是否有文本层：
-//! - 有文本层 → 直接用 pdf-extract / lopdf 解析
-//! - 无文本层 + --ocr 标志 → 启动 OCR 管线
-//! - 无文本层 + 无 --ocr 标志 → 报错退出
+//! PDF 无文本层时通过 Ghostscript + Tesseract 实现 OCR 文字提取。
+//! 管线：PDF → Ghostscript → PNG → Tesseract → 文本。
+//! 需安装 Ghostscript 和 Tesseract（含 chi_sim 中文包）。
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -628,7 +597,7 @@ fn clean_ocr_text(raw: &str) -> String {
         result.push(pending);
     }
 
-    // 全角数字 → 半角
+    // 将常见全角数字和标点转为半角
     let full_to_half: String = result.join("\n");
     let half_nums = full_to_half
         .replace('\u{ff10}', "0")
@@ -648,6 +617,8 @@ fn clean_ocr_text(raw: &str) -> String {
 }
 
 /// 判断行是否为新考核条目的起始（以序号+日期开头）
+///
+/// 示例：`"1  3月 11日，原料分厂..."`、`"12  2025年 合同评价..."`、`"5  近 3 年 安全记录..."`
 fn is_new_record_start(line: &str) -> bool {
     let re = Regex::new(
         r"^\s*\d{1,2}\s+(\d+\s*-\s*\d+\s*月|\d+\s*月|近\s*\d+\s*年|\d{4}\s*年|[一二三四五六七八九十]+\s*季度)"

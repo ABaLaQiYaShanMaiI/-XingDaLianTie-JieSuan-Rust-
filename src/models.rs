@@ -1,6 +1,4 @@
-//! 数据模型定义
-//! ===========
-//! AssessmentRecord → AreaData → SettlementData
+//! 数据模型：AssessmentRecord → AreaData → SettlementData
 
 use std::collections::BTreeMap;
 
@@ -68,6 +66,7 @@ impl AreaData {
     /// 计算小计和事业部考核金额，并按考核金额降序排列
     pub fn calculate(&mut self, ratio: f64) {
         self.subtotal = self.records.iter().map(|r| r.amount).sum();
+        // 事业部考核金额 = 小计 × ratio，保留两位小数（四舍五入）
         self.dept_amount = (self.subtotal * ratio * 100.0).round() / 100.0;
         self.records.sort_by(|a, b| b.amount.partial_cmp(&a.amount).unwrap_or(std::cmp::Ordering::Equal));
     }

@@ -1,7 +1,6 @@
-//! GUI 模块
-//! =======
-//! 提供图形化用户界面 (egui/eframe)。
-//! 支持: 文件选择、PDF 处理、实时日志显示、文件拖拽、环境检测。
+//! 图形化界面 (egui/eframe)：文件选择、PDF 处理、实时日志、拖拽、环境检测。
+// TODO: `detect_ghostscript` / `detect_tesseract` 与 ocr.rs 高度重复，后续可提取共享模块。
+
 
 use std::sync::mpsc;
 use std::thread;
@@ -934,6 +933,7 @@ fn process_in_thread(
 
     send_log(LogMessage::Info("正在解析 PDF...".to_string()));
 
+    // 使用默认 ParserConfig（GUI 暂不支持自定义 OCR DPI / 语言 / PSM 参数）
     let parser_config = ParserConfig::default();
     let mut data = parse_pdf(pdf_path, enable_ocr, no_merge, &parser_config)
         .map_err(|e| format!("PDF解析失败: {}", e))?;
@@ -1047,6 +1047,8 @@ pub fn launch_gui() {
 }
 
 /// 从系统字体目录加载中文字体（跨平台）
+///
+/// 按优先级依次尝试系统常见中文字体路径，首个存在的字体即被加载并设置为默认。
 fn setup_chinese_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
 

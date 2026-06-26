@@ -1,6 +1,4 @@
-//! 配置驱动的分类模块
-//! ==================
-//! 基于配置文件的规则动态分类，替代硬编码 if-else。
+//! 基于配置文件规则动态分类，替代硬编码 if-else。
 
 use log::{info, warn};
 
@@ -22,7 +20,7 @@ pub fn classify_records(data: &mut SettlementData, rules: &ClassifyRules) {
         let area_name = classify_one(&data.all_records[i], &rules.areas);
         data.all_records[i].area = area_name.clone();
 
-        // 确保区域存在
+        // 确保区域一定存在（classify_one 可能返回「未分类」等未在 rules.areas 中预定义的区域名）
         data.areas
             .entry(area_name.clone())
             .or_insert_with(|| AreaData::new(area_name));
@@ -62,6 +60,9 @@ pub fn classify_records(data: &mut SettlementData, rules: &ClassifyRules) {
 }
 
 /// 按配置规则对单条记录分类
+///
+/// 前置条件：调用方须确保 `AreaRule` 已通过 `compile_regexes()` 初始化，
+/// 否则 `compiled_equipment_re` / `compiled_pattern_re` 均为空，会导致前缀/正则匹配失效。
 fn classify_one(record: &AssessmentRecord, areas: &[crate::config::AreaRule]) -> String {
     let idx = record.index;
     let desc = &record.description;
@@ -72,7 +73,8 @@ fn classify_one(record: &AssessmentRecord, areas: &[crate::config::AreaRule]) ->
             || !area_cfg.equipment_prefixes.is_empty()
             || !area_cfg.description_patterns.is_empty();
 
-        // 空 match → 兜底规则
+        // 跳过无匹配条件的区域规则（如「未分类」兜底），
+        // 最终未命中任何规则时在函数末尾统一归入「未分类」
         if !has_match_rules {
             continue;
         }
@@ -113,6 +115,7 @@ mod tests {
     use super::*;
     use crate::config::AreaRule;
 
+    // 以下规则仅用于单元测试，若业务规则变动需同步更新
     fn test_rules() -> Vec<AreaRule> {
         vec![
             AreaRule {

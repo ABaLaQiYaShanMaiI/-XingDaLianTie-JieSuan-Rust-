@@ -1,7 +1,4 @@
-//! 配置加载模块
-//! ===========
-//! 支持从 YAML 文件加载分类规则及 Excel 样式配置，
-//! 未指定时使用内置默认值。
+//! 分类规则与 Excel 样式配置加载，未指定时使用内置默认值。
 
 use std::fs;
 use std::path::PathBuf;
@@ -183,6 +180,11 @@ struct RawMatchRules {
 // ============================================================
 
 /// 内置默认分类规则（硬编码兜底）
+///
+/// 注意：返回的规则中的 `compiled_*_re` 字段均为空，需在调用侧执行 `compile_regexes()` 后方可使用。
+/// 当前主要由 `default_rules_as_raw()` 经 `build_rules_from_raw()` 提供（已自动编译），
+/// 此函数保留作为极端回退路径。若确认不再使用，可标记 `#[allow(dead_code)]`。
+#[allow(dead_code)]
 pub fn default_rules() -> ClassifyRules {
     let areas = vec![
         AreaRule {
@@ -278,7 +280,7 @@ pub fn default_rules() -> ClassifyRules {
 // 加载函数
 // ============================================================
 
-/// 编译时嵌入的 classify_rules.yaml 内容（自包含回退）
+/// 编译时嵌入的 classify_rules.yaml 内容（通过 `include_str!` 将 ../classify_rules.yaml 嵌入二进制，作为自包含回退）
 const EMBEDDED_RULES_YAML: &str = include_str!("../classify_rules.yaml");
 
 /// 获取默认分类规则文件的候选路径列表
@@ -304,6 +306,9 @@ fn get_default_rules_paths() -> Vec<PathBuf> {
 }
 
 /// 加载分类规则配置
+///
+/// 优先级：用户指定路径 > EXE 同目录 classify_rules.yaml > 当前工作目录 classify_rules.yaml >
+/// 编译时嵌入 YAML > 硬编码兜底（`default_rules_as_raw`）
 pub fn load_rules(rules_path: Option<&str>) -> Result<ClassifyRules> {
     // 确定实际使用的规则文件路径
     let actual_path = if let Some(path) = rules_path {

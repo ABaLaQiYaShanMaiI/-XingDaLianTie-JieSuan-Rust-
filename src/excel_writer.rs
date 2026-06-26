@@ -1,12 +1,4 @@
-//! Excel 生成模块
-//! ==============
-//! 生成格式化的 Excel 结算单明细文件。
-//! 功能: 汇总信息区域 + 区考核概览 + 区域明细 + 校验失败警告行。
-//!
-//! 与 Python 版 (openpyxl) 输出保持一致：
-//! - 所有数据行带细边框
-//! - 数值左对齐/居中/自动换行
-//! - 区域标题使用普通字体（不加粗）
+//! 生成格式化的 Excel 结算单明细文件，与 Python 版输出保持一致。
 
 use std::path::Path;
 
@@ -95,8 +87,8 @@ pub fn generate_excel(
         .set_num_format("#,##0.00")
         .set_border(thin_border);
 
-    // 红字 + 加粗 + 左对齐 + 自动换行 + 边框（校验失败警告）
-    let red_format = Format::new()
+    // 校验错误警告格式：红字 + 加粗 + 左对齐 + 自动换行 + 边框
+    let validation_error_format = Format::new()
         .set_bold()
         .set_font_size(style.font_size)
         .set_font_name(&style.font_name)
@@ -171,7 +163,7 @@ pub fn generate_excel(
             current_row,
             2,
             &warning_text,
-            &red_format,
+            &validation_error_format,
         )?;
     }
 
@@ -289,6 +281,7 @@ fn write_area_section(
 
     // 数据行
     for record in &area_data.records {
+        // 空描述时写入空串，避免显示错误
         let desc = if record.description.is_empty() {
             ""
         } else {

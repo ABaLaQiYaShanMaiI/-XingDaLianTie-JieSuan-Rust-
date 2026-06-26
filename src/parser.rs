@@ -1,7 +1,4 @@
-//! PDF 解析模块（文本通道）
-//! ======================
-//! 使用 pdf-extract 提取 PDF 文本内容，
-//! 通过正则匹配从文本行中提取考核记录。
+//! 使用 pdf-extract / lopdf 提取 PDF 文本，通过正则匹配解析考核记录。
 
 use std::path::Path;
 use std::fs;
@@ -18,6 +15,8 @@ use crate::config::ParserConfig;
 // ============================================================
 
 /// 考核记录描述前缀（共用，兼容空格情况）
+///
+/// 匹配示例：`"3月 11日，..."`、`"2025年 ..."`、`"近 3 年 ..."`、`"一季度 ..."`
 fn assessment_desc_re() -> &'static Regex {
     static RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
         Regex::new(r"^(?:\d+\s*-\s*\d+\s*月|\d+\s*月|近\s*\d+\s*年|\d{4}\s*年|[一二三四五六七八九十]+\s*季度)").unwrap()
@@ -551,6 +550,13 @@ fn extract_from_text(full_text: &str, no_merge: bool, config: &ParserConfig) -> 
 }
 
 /// 从文本通道的多行构建 AssessmentRecord
+///
+/// 流程：
+/// 1. 解析序号（如 `"12 3月..."`）
+/// 2. 过滤非考核行
+/// 3. 提取条款子串并移除
+/// 4. 移除末尾金额数字
+/// 5. 合并多个空格
 fn build_text_record(lines: &[String], config: &ParserConfig) -> Option<AssessmentRecord> {
     if lines.is_empty() {
         return None;
@@ -591,16 +597,17 @@ fn build_text_record(lines: &[String], config: &ParserConfig) -> Option<Assessme
         return None;
     }
 
-    // 清理描述
+    // 清理描述：
+    // 1) 移除条款子串
     let mut desc = remainder.clone();
     for clause in &clauses {
         desc = desc.replace(clause.as_str(), "");
     }
-    // 移除末尾金额数字
+    // 2) 移除末尾金额数字
     if let Ok(amount_re) = Regex::new(r"\d+(?:,\d+)*(?:\.\d+)??\s*$") {
         desc = amount_re.replace(&desc, "").to_string();
     }
-    // 清理多余空白
+    // 3) 合并多个空格
     if let Ok(ws_re) = Regex::new(r"\s+") {
         desc = ws_re.replace_all(&desc, "").to_string();
     }
@@ -623,6 +630,8 @@ fn build_text_record(lines: &[String], config: &ParserConfig) -> Option<Assessme
 // ============================================================
 
 /// 合并两个通道的结果并去重
+///
+/// 预留：当同时启用表格和文本解析通道时用于合并结果。
 #[allow(dead_code)]
 pub fn merge_deduplicate(
     table_records: &[AssessmentRecord],
