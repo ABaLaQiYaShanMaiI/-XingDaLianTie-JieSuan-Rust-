@@ -26,7 +26,7 @@ const GS_EXE: &str = "gs";
 
 /// Ghostscript 候选安装路径（Windows）
 #[cfg(target_os = "windows")]
-fn find_ghostscript() -> Option<PathBuf> {
+pub(crate) fn find_ghostscript() -> Option<PathBuf> {
     // 1. 检查环境变量
     if let Ok(path) = std::env::var("GHOSTSCRIPT_PATH") {
         let p = Path::new(&path);
@@ -85,7 +85,7 @@ fn tools_dir_gs() -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "macos")]
-fn find_ghostscript() -> Option<PathBuf> {
+pub(crate) fn find_ghostscript() -> Option<PathBuf> {
     // 1. 检查环境变量
     if let Ok(path) = std::env::var("GHOSTSCRIPT_PATH") {
         let p = Path::new(&path);
@@ -113,7 +113,7 @@ fn find_ghostscript() -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "linux")]
-fn find_ghostscript() -> Option<PathBuf> {
+pub(crate) fn find_ghostscript() -> Option<PathBuf> {
     // 1. 检查环境变量
     if let Ok(path) = std::env::var("GHOSTSCRIPT_PATH") {
         let p = Path::new(&path);
@@ -125,7 +125,7 @@ fn find_ghostscript() -> Option<PathBuf> {
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-fn find_ghostscript() -> Option<PathBuf> {
+pub(crate) fn find_ghostscript() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("GHOSTSCRIPT_PATH") {
         let p = Path::new(&path);
         if p.exists() {
@@ -143,7 +143,7 @@ const TESSERACT_EXE: &str = "tesseract";
 
 /// Tesseract 候选安装路径（Windows）
 #[cfg(target_os = "windows")]
-fn find_tesseract() -> Option<PathBuf> {
+pub(crate) fn find_tesseract() -> Option<PathBuf> {
     // 1. 检查环境变量
     if let Ok(path) = std::env::var("TESSERACT_PATH") {
         let p = Path::new(&path);
@@ -191,7 +191,7 @@ fn tools_dir_tesseract() -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "macos")]
-fn find_tesseract() -> Option<PathBuf> {
+pub(crate) fn find_tesseract() -> Option<PathBuf> {
     // 1. 检查环境变量
     if let Ok(path) = std::env::var("TESSERACT_PATH") {
         let p = Path::new(&path);
@@ -218,7 +218,7 @@ fn find_tesseract() -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "linux")]
-fn find_tesseract() -> Option<PathBuf> {
+pub(crate) fn find_tesseract() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("TESSERACT_PATH") {
         let p = Path::new(&path);
         if p.exists() {
@@ -229,7 +229,7 @@ fn find_tesseract() -> Option<PathBuf> {
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-fn find_tesseract() -> Option<PathBuf> {
+pub(crate) fn find_tesseract() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("TESSERACT_PATH") {
         let p = Path::new(&path);
         if p.exists() {
