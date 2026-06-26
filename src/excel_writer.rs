@@ -23,7 +23,7 @@ pub fn generate_excel(
     // 确保输出目录存在
     if let Some(parent) = Path::new(output_path).parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
-            XingDaError::ExcelWrite(format!("无法创建输出目录: {}", e))
+            XingDaError::ExcelWrite(format!("无法创建输出目录 {}: {}", parent.display(), e))
         })?;
     }
 

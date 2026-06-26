@@ -441,14 +441,11 @@ fn extract_reward_amount(full_text: &str, config: &ParserConfig) -> f64 {
     if let Some(caps) = section_re.captures(full_text) {
         if let Some(section_m) = caps.get(1) {
             let section = section_m.as_str();
-            let mut amounts: Vec<f64> = num_re
+            if let Some(val) = num_re
                 .captures_iter(section)
                 .filter_map(|caps| caps.get(1))
                 .filter_map(|m| m.as_str().replace(",", "").parse::<f64>().ok())
                 .filter(|&a| a > min_threshold)
-                .collect();
-            if let Some(val) = amounts
-                .into_iter()
                 .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             {
                 debug!("  嘉奖金额（策略4: 区间最大值）: {:.2}", val);
