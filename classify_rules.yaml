@@ -1,0 +1,46 @@
+# 兴达炼铁保产事业部 - 分类规则配置
+# ============================================
+# 按 priority 从低到高匹配（数字越小优先级越高）
+# 匹配到第一个规则后立即返回，不再继续匹配
+
+areas:
+  - name: "事业部"
+    priority: 1
+    match:
+      item_numbers: []
+      description_patterns:
+        - "协力安全管理工作方案.*落实"
+        - "合同评价.*排名"
+
+  - name: "供矿作业区"
+    priority: 2
+    match:
+      keywords: ["供矿", "翻车", "球团"]
+      equipment_prefixes: []
+
+  - name: "煤库作业区"
+    priority: 3
+    match:
+      keywords: ["煤库", "原煤仓", "原煤", "卸煤间"]
+      equipment_prefixes: ["M"]
+
+  - name: "原料分厂作业区"
+    priority: 4
+    match:
+      keywords: ["原料分厂", "输入作业区", "输入区域", "原料区域", "原料输入", "原料班", "协力系统", "兴达原料作业区"]
+      equipment_prefixes: ["B", "E", "F", "K", "N", "C"]
+
+  - name: "未分类"
+    priority: 99
+    match: {}
+
+# 事业部考核金额计算比例（默认 1% = 0.01）
+department_ratio: 0.01
+
+# Excel 输出区域顺序
+area_order:
+  - "事业部"
+  - "原料分厂作业区"
+  - "供矿作业区"
+  - "煤库作业区"
+  - "未分类"

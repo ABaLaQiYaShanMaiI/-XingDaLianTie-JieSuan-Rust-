@@ -1,0 +1,77 @@
+[package]
+name = "xingda-jiesuan"
+version = "1.0.0"
+description = "兴达炼铁保产事业部 - PDF结算单转Excel明细工具 (Rust版)"
+authors = ["XingDa"]
+edition = "2021"
+license = "MIT"
+
+# ============================================================
+# Workspace 配置
+# ============================================================
+
+[dependencies]
+# --- PDF 文本提取 ---
+pdf-extract = "0.7"
+lopdf = "0.34"
+
+# --- Excel 生成 ---
+rust_xlsxwriter = "0.83"
+
+# --- 正则表达式 ---
+regex = "1"
+
+# --- YAML 配置解析 ---
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+
+# --- CLI 参数解析 ---
+clap = { version = "4", features = ["derive"] }
+
+# --- 日志 ---
+log = "0.4"
+env_logger = "0.11"
+
+# --- 错误处理 ---
+thiserror = "2"
+anyhow = "1"
+
+# --- 文件/路径 ---
+dirs = "5"
+
+# --- GUI (eframe/egui) ---
+eframe = "0.31"
+egui = "0.31"
+rfd = "0.15"
+
+# --- 字符编码 ---
+encoding_rs = "0.8"
+
+# --- 中文排序（拼音排序用）---
+unicode-segmentation = "1"
+
+# --- 打开文件夹/文件（跨平台）---
+open = "5"
+
+# --- Windows 特定（打开文件夹等）---
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_System_Com",
+    "Win32_UI_Shell",
+    "Win32_Storage",
+] }
+
+# ============================================================
+# 构建配置
+# ============================================================
+
+[profile.release]
+opt-level = "z"      # 优化体积
+lto = true           # 链接时优化
+strip = true         # 去除符号
+codegen-units = 1    # 更好的优化
+
+# ============================================================
+# 打包配置：嵌入 classify_rules.yaml 到二进制
+# ============================================================
+# 构建脚本见 build.rs
