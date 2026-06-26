@@ -2,11 +2,16 @@
 //! ==============
 //! 生成格式化的 Excel 结算单明细文件。
 //! 功能: 汇总信息区域 + 区考核概览 + 区域明细 + 校验失败警告行。
+//!
+//! 与 Python 版 (openpyxl) 输出保持一致：
+//! - 所有数据行带细边框
+//! - 数值左对齐/居中/自动换行
+//! - 区域标题使用普通字体（不加粗）
 
 use std::path::Path;
 
 use log::info;
-use rust_xlsxwriter::{Format, Workbook, Worksheet, Color};
+use rust_xlsxwriter::{Format, FormatAlign, FormatBorder, Workbook, Worksheet, Color};
 
 use crate::config::ExcelStyle;
 use crate::error::{Result, XingDaError};
@@ -32,33 +37,76 @@ pub fn generate_excel(
 
     let mut workbook = Workbook::new();
 
+    // ---- 细边框（与 Python openpyxl Side(style="thin") 一致） ----
+    let thin_border = FormatBorder::Thin;
+
     // ---- 定义格式 ----
-    let header_format = Format::new()
+
+    // 居中 + 边框 + 普通字体
+    let center_format = Format::new()
+        .set_font_size(style.font_size)
+        .set_font_name(&style.font_name)
+        .set_align(FormatAlign::Center)
+        .set_align(FormatAlign::VerticalCenter)
+        .set_border(thin_border);
+
+    // 居中 + 边框 + 加粗（用于表头/汇总标题）
+    let center_bold_format = Format::new()
         .set_bold()
         .set_font_size(style.font_size)
-        .set_font_name(&style.font_name);
+        .set_font_name(&style.font_name)
+        .set_align(FormatAlign::Center)
+        .set_align(FormatAlign::VerticalCenter)
+        .set_border(thin_border);
 
-    let data_format = Format::new()
+    // 左对齐 + 边框 + 普通字体（用于标签列）
+    let left_format = Format::new()
         .set_font_size(style.font_size)
-        .set_font_name(&style.font_name);
+        .set_font_name(&style.font_name)
+        .set_align(FormatAlign::Left)
+        .set_align(FormatAlign::VerticalCenter)
+        .set_border(thin_border);
 
+    // 左对齐 + 自动换行 + 边框（用于考核事项描述）
+    let left_wrap_format = Format::new()
+        .set_font_size(style.font_size)
+        .set_font_name(&style.font_name)
+        .set_align(FormatAlign::Left)
+        .set_align(FormatAlign::VerticalCenter)
+        .set_text_wrap()
+        .set_border(thin_border);
+
+    // 居中 + 自动换行 + 边框 + 加粗（用于表头单元格）
+    let center_wrap_format = Format::new()
+        .set_bold()
+        .set_font_size(style.font_size)
+        .set_font_name(&style.font_name)
+        .set_align(FormatAlign::Center)
+        .set_align(FormatAlign::VerticalCenter)
+        .set_text_wrap()
+        .set_border(thin_border);
+
+    // 居中 + 数字格式 + 边框
     let amount_format = Format::new()
         .set_font_size(style.font_size)
         .set_font_name(&style.font_name)
-        .set_num_format("#,##0.00");
+        .set_align(FormatAlign::Center)
+        .set_align(FormatAlign::VerticalCenter)
+        .set_num_format("#,##0.00")
+        .set_border(thin_border);
 
+    // 红字 + 加粗 + 左对齐 + 自动换行 + 边框（校验失败警告）
     let red_format = Format::new()
         .set_bold()
         .set_font_size(style.font_size)
         .set_font_name(&style.font_name)
-        .set_font_color(Color::Red);
+        .set_font_color(Color::Red)
+        .set_align(FormatAlign::Left)
+        .set_align(FormatAlign::VerticalCenter)
+        .set_text_wrap()
+        .set_border(thin_border);
 
     // 创建工作表
-    let _sheet_name = if data.month_label.is_empty() {
-        "结算明细"
-    } else {
-        &data.month_label
-    };
     let mut worksheet = workbook.add_worksheet();
 
     // 设置列宽
@@ -74,8 +122,9 @@ pub fn generate_excel(
             &mut worksheet,
             current_row,
             data,
-            &header_format,
-            &data_format,
+            &center_bold_format,
+            &left_format,
+            &center_format,
             &amount_format,
         )?;
     }
@@ -96,9 +145,11 @@ pub fn generate_excel(
                     &mut worksheet,
                     current_row,
                     area_data,
-                    &header_format,
-                    &data_format,
+                    &center_format,
+                    &left_wrap_format,
+                    &center_wrap_format,
                     &amount_format,
+                    &center_bold_format,
                     style,
                 )?;
             }
@@ -135,16 +186,18 @@ fn write_summary_section(
     ws: &mut Worksheet,
     start_row: u32,
     data: &SettlementData,
-    header_format: &Format,
-    data_format: &Format,
+    center_bold: &Format,
+    left_format: &Format,
+    center_format: &Format,
     amount_format: &Format,
 ) -> Result<u32> {
     let mut row = start_row;
 
-    // 标题
-    ws.merge_range(row, 0, row, 2, "结算单汇总信息", header_format)?;
+    // 标题行（加粗 + 居中 + 边框）
+    ws.merge_range(row, 0, row, 2, "结算单汇总信息", center_bold)?;
     row += 1;
 
+    // 合同基本信息（标签左对齐，值居中）
     let info_items: Vec<(String, String)> = vec![
         ("合同编号".to_string(), data.contract_no.clone()),
         ("合同名称".to_string(), data.contract_name.clone()),
@@ -152,13 +205,15 @@ fn write_summary_section(
     ];
 
     for (label, value) in &info_items {
-        ws.merge_range(row, 0, row, 1, &format!("{}：", label), data_format)?;
-        ws.write_with_format(row, 2, value.as_str(), data_format)?;
+        ws.merge_range(row, 0, row, 1, &format!("{}：", label), left_format)?;
+        ws.write_with_format(row, 2, value.as_str(), center_format)?;
         row += 1;
     }
 
+    // 空行
     row += 1;
 
+    // 费用项目
     let fee_items: Vec<(String, f64)> = vec![
         ("作业费用".to_string(), data.work_fee),
         ("考核金额合计".to_string(), data.total_assessment),
@@ -167,7 +222,7 @@ fn write_summary_section(
     ];
 
     for (label, value) in &fee_items {
-        ws.merge_range(row, 0, row, 1, &format!("{}：", label), data_format)?;
+        ws.merge_range(row, 0, row, 1, &format!("{}：", label), left_format)?;
         ws.write_with_format(row, 2, *value, amount_format)?;
         row += 1;
     }
@@ -175,21 +230,23 @@ fn write_summary_section(
     row += 1;
 
     // 区域考核概览标题
-    ws.merge_range(row, 0, row, 2, "区域考核概览", header_format)?;
+    ws.merge_range(row, 0, row, 2, "区域考核概览", center_bold)?;
     row += 1;
 
+    // 区域概览表头（居中 + 加粗 + 边框）
     let area_headers = ["区域", "条数", "考核金额小计"];
     for (col_idx, header) in area_headers.iter().enumerate() {
-        ws.write_with_format(row, col_idx as u16, *header, header_format)?;
+        ws.write_with_format(row, col_idx as u16, *header, center_bold)?;
     }
     row += 1;
 
+    // 区域概览数据行
     for (area_name, area_data) in &data.areas {
         if area_data.records.is_empty() {
             continue;
         }
-        ws.write_with_format(row, 0, area_name.as_str(), data_format)?;
-        ws.write_with_format(row, 1, area_data.records.len() as f64, data_format)?;
+        ws.write_with_format(row, 0, area_name.as_str(), center_format)?;
+        ws.write_with_format(row, 1, area_data.records.len() as f64, center_format)?;
         ws.write_with_format(row, 2, area_data.subtotal, amount_format)?;
         row += 1;
     }
@@ -202,49 +259,57 @@ fn write_area_section(
     ws: &mut Worksheet,
     start_row: u32,
     area_data: &AreaData,
-    header_format: &Format,
-    data_format: &Format,
+    center_format: &Format,
+    left_wrap_format: &Format,
+    center_wrap_format: &Format,
     amount_format: &Format,
+    center_bold: &Format,
     style: &ExcelStyle,
 ) -> Result<u32> {
     let mut row = start_row;
 
+    // 区域标题行（普通字体 + 居中 + 边框，与 Python 版一致：不用加粗）
     ws.merge_range(
         row,
         0,
         row,
         2,
         &format!("{}考核明细", area_data.name),
-        header_format,
+        center_format,
     )?;
     row += 1;
 
+    // 表头行（加粗 + 居中 + 自动换行 + 边框）
     ws.set_row_height(row, style.header_row_height)?;
     let headers = ["考核\n事项", "条款", "考核\n金额"];
     for (col_idx, header) in headers.iter().enumerate() {
-        ws.write_with_format(row, col_idx as u16, *header, header_format)?;
+        ws.write_with_format(row, col_idx as u16, *header, center_wrap_format)?;
     }
     row += 1;
 
+    // 数据行
     for record in &area_data.records {
         let desc = if record.description.is_empty() {
             ""
         } else {
             &record.description
         };
-        ws.write_with_format(row, 0, desc, data_format)?;
-        ws.write_with_format(row, 1, &record.clause, data_format)?;
+        // 考核事项：左对齐 + 自动换行 + 边框
+        ws.write_with_format(row, 0, desc, left_wrap_format)?;
+        // 条款：居中 + 边框
+        ws.write_with_format(row, 1, &record.clause, center_format)?;
+        // 金额：居中 + 数字格式 + 边框
         ws.write_with_format(row, 2, record.amount, amount_format)?;
         row += 1;
     }
 
-    // 小计行
-    ws.merge_range(row, 0, row, 1, "小计", header_format)?;
+    // 小计行（加粗 + 居中 + 边框）
+    ws.merge_range(row, 0, row, 1, "小计", center_bold)?;
     ws.write_with_format(row, 2, area_data.subtotal, amount_format)?;
     row += 1;
 
     // 事业部考核金额行
-    ws.merge_range(row, 0, row, 1, "事业部考核金额", header_format)?;
+    ws.merge_range(row, 0, row, 1, "事业部考核金额", center_bold)?;
     ws.write_with_format(row, 2, area_data.dept_amount, amount_format)?;
     row += 1;
 
