@@ -58,7 +58,14 @@ const GS_EXE: &str = "gs";
 /// Ghostscript 候选安装路径（Windows）
 #[cfg(target_os = "windows")]
 fn find_ghostscript() -> Option<PathBuf> {
-    // 1. 直接尝试 PATH 中查找
+    // 1. 检查环境变量
+    if let Ok(path) = std::env::var("GHOSTSCRIPT_PATH") {
+        let p = Path::new(&path);
+        if p.exists() {
+            return Some(p.to_path_buf());
+        }
+    }
+    // 2. 直接尝试 PATH 中查找
     if let Some(found) = which_cmd(GS_EXE) {
         return Some(found);
     }
@@ -89,9 +96,54 @@ fn find_ghostscript() -> Option<PathBuf> {
     None
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 fn find_ghostscript() -> Option<PathBuf> {
-    // Linux/macOS: rely on PATH
+    // 1. 检查环境变量
+    if let Ok(path) = std::env::var("GHOSTSCRIPT_PATH") {
+        let p = Path::new(&path);
+        if p.exists() {
+            return Some(p.to_path_buf());
+        }
+    }
+    // 2. 尝试 which gs
+    if let Some(found) = which_cmd(GS_EXE) {
+        return Some(found);
+    }
+    // 3. Homebrew 标准路径 (含 M1/M2 ARM)
+    let candidates = [
+        "/usr/local/bin/gs",
+        "/opt/local/bin/gs",               // MacPorts
+        "/usr/local/opt/ghostscript/bin/gs",
+        "/opt/homebrew/bin/gs",            // Apple Silicon Homebrew
+    ];
+    for p in &candidates {
+        if Path::new(p).exists() {
+            return Some(PathBuf::from(p));
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn find_ghostscript() -> Option<PathBuf> {
+    // 1. 检查环境变量
+    if let Ok(path) = std::env::var("GHOSTSCRIPT_PATH") {
+        let p = Path::new(&path);
+        if p.exists() {
+            return Some(p.to_path_buf());
+        }
+    }
+    which_cmd(GS_EXE)
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+fn find_ghostscript() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("GHOSTSCRIPT_PATH") {
+        let p = Path::new(&path);
+        if p.exists() {
+            return Some(p.to_path_buf());
+        }
+    }
     which_cmd(GS_EXE)
 }
 
@@ -122,8 +174,52 @@ fn find_tesseract() -> Option<PathBuf> {
     None
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 fn find_tesseract() -> Option<PathBuf> {
+    // 1. 检查环境变量
+    if let Ok(path) = std::env::var("TESSERACT_PATH") {
+        let p = Path::new(&path);
+        if p.exists() {
+            return Some(p.to_path_buf());
+        }
+    }
+    // 2. 尝试 which
+    if let Some(found) = which_cmd(TESSERACT_EXE) {
+        return Some(found);
+    }
+    // 3. Homebrew 标准路径
+    let candidates = [
+        "/usr/local/bin/tesseract",
+        "/opt/local/bin/tesseract",
+        "/opt/homebrew/bin/tesseract",
+    ];
+    for p in &candidates {
+        if Path::new(p).exists() {
+            return Some(PathBuf::from(p));
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn find_tesseract() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("TESSERACT_PATH") {
+        let p = Path::new(&path);
+        if p.exists() {
+            return Some(p.to_path_buf());
+        }
+    }
+    which_cmd(TESSERACT_EXE)
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+fn find_tesseract() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("TESSERACT_PATH") {
+        let p = Path::new(&path);
+        if p.exists() {
+            return Some(p.to_path_buf());
+        }
+    }
     which_cmd(TESSERACT_EXE)
 }
 
@@ -213,8 +309,12 @@ pub fn perform_ocr(pdf_path: &str, config: &ParserConfig) -> Result<OcrResult> {
         .and_then(|s| s.to_str())
         .unwrap_or("ocr_temp");
 
-    // 临时目录
-    let temp_dir = std::env::temp_dir().join("xingda_ocr");
+    // 临时目录（使用唯一名称避免路径冲突/编码问题）
+    let temp_dir = {
+        let base = std::env::temp_dir();
+        let unique_name = format!("xingda_ocr_{}", std::process::id());
+        base.join(&unique_name)
+    };
     fs::create_dir_all(&temp_dir)
         .map_err(|e| XingDaError::Pdf(format!("无法创建 OCR 临时目录: {}", e)))?;
 

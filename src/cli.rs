@@ -137,32 +137,18 @@ pub fn setup_logging(level: &str, log_file: Option<&str>) {
     builder.init();
 }
 
-/// 生成日志文件时间戳字符串
+/// 生成日志文件时间戳字符串（跨平台安全格式）
 fn chrono_timestamp() -> String {
-    use std::time::SystemTime;
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = now.as_secs();
-    // 简单格式: 20260626_200000
-    // 使用 time crate 来做格式化（用 UTC）
-    if let Ok(dt) = time::OffsetDateTime::from_unix_timestamp(secs as i64) {
-        let fmt = dt
-            .format(
-                &time::format_description::well_known::Rfc3339,
-            )
-            .unwrap_or_default();
-        // RFC 3339: "2026-06-26T20:00:00Z" → "20260626_200000"
-        fmt.replace('-', "")
-            .replace(':', "")
-            .replace('T', "_")
-            .replace('Z', "")
-            .chars()
-            .take(15)
-            .collect()
-    } else {
-        format!("{}", secs)
-    }
+    let dt = time::OffsetDateTime::now_utc();
+    format!(
+        "{:04}-{:02}-{:02}_{:02}-{:02}-{:02}",
+        dt.year(),
+        dt.month() as u8,
+        dt.day(),
+        dt.hour(),
+        dt.minute(),
+        dt.second()
+    )
 }
 
 /// 日志文件写入器（带 5MB 轮转）

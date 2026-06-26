@@ -525,26 +525,76 @@ impl XingDaApp {
         }
     }
 
-    /// 打开输出目录
+    /// 打开输出目录（跨平台）
     fn open_output_dir(&self) {
         let path = if self.output_dir.is_empty() {
-            "./output"
+            "./output".to_string()
         } else {
-            &self.output_dir
+            self.output_dir.clone()
         };
 
-        if let Err(e) = open::that(path) {
+        let result = {
+            #[cfg(target_os = "windows")]
+            {
+                std::process::Command::new("explorer")
+                    .arg(&path)
+                    .spawn()
+                    .map(|_| ())
+            }
+            #[cfg(target_os = "macos")]
+            {
+                std::process::Command::new("open")
+                    .arg(&path)
+                    .spawn()
+                    .map(|_| ())
+            }
+            #[cfg(target_os = "linux")]
+            {
+                let managers = ["xdg-open", "nautilus", "dolphin", "pcmanfm"];
+                let mut result = Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "No file manager found",
+                ));
+                for manager in &managers {
+                    if std::process::Command::new(manager)
+                        .arg(&path)
+                        .spawn()
+                        .is_ok()
+                    {
+                        result = Ok(());
+                        break;
+                    }
+                }
+                result.map(|_| ())
+            }
+            #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+            {
+                open::that(&path)
+            }
+        };
+
+        if let Err(e) = result {
             warn!("无法打开目录: {}", e);
+            info!("请手动打开: {}", path);
         }
     }
 }
 
 // ============================================================
-// 环境检测函数
+// 环境检测函数（跨平台）
 // ============================================================
 
-/// 检测 Ghostscript 安装
+/// 检测 Ghostscript 安装（跨平台）
 fn detect_ghostscript() -> ToolStatus {
+    // 1. 检查环境变量 GHOSTSCRIPT_PATH
+    if let Ok(path) = std::env::var("GHOSTSCRIPT_PATH") {
+        let p = std::path::Path::new(&path);
+        if p.exists() {
+            info!("通过环境变量 GHOSTSCRIPT_PATH 找到 Ghostscript: {}", path);
+            return ToolStatus::Found(path);
+        }
+    }
+
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
@@ -559,10 +609,17 @@ fn detect_ghostscript() -> ToolStatus {
                 }
             }
         }
-        // 再尝试常见安装路径
-        let candidates = [
-            r"C:\Program Files\gs\gs10.05.0\bin\gswin64c.exe", // latest stable
-        ];
+        // 再尝试 gswin32c.exe
+        if let Ok(output) = Command::new("where").arg("gswin32c.exe").output() {
+            if output.status.success() {
+                if let Some(line) = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .next()
+                {
+                    return ToolStatus::Found(line.to_string());
+                }
+            }
+        }
         // 扫描 Program Files\gs 目录
         use std::path::Path;
         let base_dirs = [
@@ -582,11 +639,21 @@ fn detect_ghostscript() -> ToolStatus {
                                     gs.to_string_lossy().to_string(),
                                 );
                             }
+                            let gs32 = dir.join("bin").join("gswin32c.exe");
+                            if gs32.exists() {
+                                return ToolStatus::Found(
+                                    gs32.to_string_lossy().to_string(),
+                                );
+                            }
                         }
                     }
                 }
             }
         }
+        // 固定候选路径
+        let candidates = [
+            r"C:\Program Files\gs\gs10.05.0\bin\gswin64c.exe",
+        ];
         for p in &candidates {
             if Path::new(p).exists() {
                 return ToolStatus::Found(p.to_string());
@@ -594,8 +661,59 @@ fn detect_ghostscript() -> ToolStatus {
         }
         ToolStatus::NotFound
     }
-    #[cfg(not(target_os = "windows"))]
+
+    #[cfg(target_os = "macos")]
     {
+        // 先尝试 which gs
+        if let Ok(output) = std::process::Command::new("which")
+            .arg("gs")
+            .output()
+        {
+            if output.status.success() {
+                if let Some(line) = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .next()
+                {
+                    return ToolStatus::Found(line.to_string());
+                }
+            }
+        }
+        // Homebrew 标准路径 (含 M1/M2 ARM)
+        let candidates = [
+            "/usr/local/bin/gs",
+            "/opt/local/bin/gs",          // MacPorts
+            "/usr/local/opt/ghostscript/bin/gs",
+            "/opt/homebrew/bin/gs",       // Apple Silicon Homebrew
+        ];
+        for p in &candidates {
+            if std::path::Path::new(p).exists() {
+                return ToolStatus::Found(p.to_string());
+            }
+        }
+        ToolStatus::NotFound
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(output) = std::process::Command::new("which")
+            .arg("gs")
+            .output()
+        {
+            if output.status.success() {
+                if let Some(line) = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .next()
+                {
+                    return ToolStatus::Found(line.to_string());
+                }
+            }
+        }
+        ToolStatus::NotFound
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        // fallback: try which gs
         if let Ok(output) = std::process::Command::new("which")
             .arg("gs")
             .output()
@@ -613,8 +731,17 @@ fn detect_ghostscript() -> ToolStatus {
     }
 }
 
-/// 检测 Tesseract 安装
+/// 检测 Tesseract 安装（跨平台）
 fn detect_tesseract() -> ToolStatus {
+    // 1. 检查环境变量 TESSERACT_PATH
+    if let Ok(path) = std::env::var("TESSERACT_PATH") {
+        let p = std::path::Path::new(&path);
+        if p.exists() {
+            info!("通过环境变量 TESSERACT_PATH 找到 Tesseract: {}", path);
+            return ToolStatus::Found(path);
+        }
+    }
+
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
@@ -640,7 +767,54 @@ fn detect_tesseract() -> ToolStatus {
         }
         ToolStatus::NotFound
     }
-    #[cfg(not(target_os = "windows"))]
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = std::process::Command::new("which")
+            .arg("tesseract")
+            .output()
+        {
+            if output.status.success() {
+                if let Some(line) = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .next()
+                {
+                    return ToolStatus::Found(line.to_string());
+                }
+            }
+        }
+        let candidates = [
+            "/usr/local/bin/tesseract",
+            "/opt/local/bin/tesseract",
+            "/opt/homebrew/bin/tesseract",  // Apple Silicon Homebrew
+        ];
+        for p in &candidates {
+            if std::path::Path::new(p).exists() {
+                return ToolStatus::Found(p.to_string());
+            }
+        }
+        ToolStatus::NotFound
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(output) = std::process::Command::new("which")
+            .arg("tesseract")
+            .output()
+        {
+            if output.status.success() {
+                if let Some(line) = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .next()
+                {
+                    return ToolStatus::Found(line.to_string());
+                }
+            }
+        }
+        ToolStatus::NotFound
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
         if let Ok(output) = std::process::Command::new("which")
             .arg("tesseract")
@@ -766,17 +940,51 @@ pub fn launch_gui() {
     }
 }
 
-/// 从系统字体目录加载中文字体
+/// 从系统字体目录加载中文字体（跨平台）
 fn setup_chinese_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
 
-    let font_paths = [
-        "C:\\Windows\\Fonts\\msyh.ttc",
-        "C:\\Windows\\Fonts\\msyh.ttf",
-        "C:\\Windows\\Fonts\\simsun.ttc",
-        "C:\\Windows\\Fonts\\simhei.ttf",
-        "C:\\Windows\\Fonts\\simfang.ttf",
-    ];
+    let font_paths: Vec<&str> = {
+        #[cfg(target_os = "windows")]
+        {
+            vec![
+                r"C:\Windows\Fonts\msyh.ttc",
+                r"C:\Windows\Fonts\msyh.ttf",
+                r"C:\Windows\Fonts\simsun.ttc",
+                r"C:\Windows\Fonts\simhei.ttf",
+                r"C:\Windows\Fonts\simfang.ttf",
+            ]
+        }
+        #[cfg(target_os = "macos")]
+        {
+            vec![
+                "/Library/Fonts/STHeiti Light.ttc",
+                "/System/Library/Fonts/PingFang.ttc",
+                "/Library/Fonts/Noto Sans CJK JP/NotoSansCJKjp-Regular.otf",
+                "/Library/Fonts/SimHei.ttf",
+                "/System/Library/Fonts/STHeiti Medium.ttc",
+            ]
+        }
+        #[cfg(target_os = "linux")]
+        {
+            vec![
+                "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+                "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+                "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+            ]
+        }
+        #[cfg(not(any(
+            target_os = "windows",
+            target_os = "macos",
+            target_os = "linux"
+        )))]
+        {
+            vec![]
+        }
+    };
 
     let font_name = "chinese_font";
     for path in &font_paths {
