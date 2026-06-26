@@ -10,7 +10,7 @@ use eframe::egui;
 use log::{info, warn};
 
 use crate::classifier::classify_records;
-use crate::config::{load_rules, load_excel_style, ParserConfig};
+use crate::config::{load_rules, load_excel_style, ParserConfig, StylePreset};
 use crate::excel_writer::generate_excel;
 use crate::parser::parse_pdf;
 use crate::validator::{generate_validation_summary, validate_amounts};
@@ -55,6 +55,10 @@ struct XingDaApp {
     dump_text: bool,
     no_summary: bool,
     enable_ocr: bool,
+    summary_only: bool,
+    no_merge: bool,
+    style_preset: Option<StylePreset>,
+    log_file_path: String,
 
     // 处理状态
     processing: bool,
@@ -86,6 +90,10 @@ impl Default for XingDaApp {
             dump_text: false,
             no_summary: false,
             enable_ocr: false,
+            summary_only: false,
+            no_merge: false,
+            style_preset: None,
+            log_file_path: String::new(),
             processing: false,
             log_messages: Vec::new(),
             log_receiver: None,
@@ -200,7 +208,7 @@ impl eframe::App for XingDaApp {
                 });
             });
 
-            // 选项
+            // 基本选项
             ui.collapsing("⚙ 选项", |ui| {
                 ui.checkbox(
                     &mut self.validate_only,
@@ -210,6 +218,10 @@ impl eframe::App for XingDaApp {
                 ui.checkbox(
                     &mut self.no_summary,
                     "不生成汇总信息区域（--no-summary）",
+                );
+                ui.checkbox(
+                    &mut self.summary_only,
+                    "仅生成汇总 sheet，跳过区域明细（--summary-only）",
                 );
                 ui.checkbox(
                     &mut self.enable_ocr,
@@ -223,6 +235,55 @@ impl eframe::App for XingDaApp {
                     ui.colored_label(
                         egui::Color32::from_rgb(255, 170, 60),
                         "⚠ 注意：OCR 工具未完全安装，请检查「环境检测」面板",
+                    );
+                }
+
+                ui.separator();
+
+                // Excel 样式预设
+                ui.horizontal(|ui| {
+                    ui.label("Excel 样式：");
+                    ui.selectable_value(
+                        &mut self.style_preset,
+                        None,
+                        "默认",
+                    );
+                    ui.selectable_value(
+                        &mut self.style_preset,
+                        Some(StylePreset::Compact),
+                        "紧凑",
+                    );
+                    ui.selectable_value(
+                        &mut self.style_preset,
+                        Some(StylePreset::Wide),
+                        "宽松",
+                    );
+                });
+            });
+
+            // 高级选项
+            ui.collapsing("🔧 高级选项", |ui| {
+                ui.checkbox(
+                    &mut self.no_merge,
+                    "禁用多行合并（调试用，--no-merge）",
+                );
+
+                ui.horizontal(|ui| {
+                    ui.label("日志文件：");
+                    ui.text_edit_singleline(&mut self.log_file_path);
+                    if ui.button("浏览...").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("日志", &["log", "txt"])
+                            .save_file()
+                        {
+                            self.log_file_path = path.to_string_lossy().to_string();
+                        }
+                    }
+                });
+                if !self.log_file_path.is_empty() {
+                    ui.colored_label(
+                        egui::Color32::GRAY,
+                        "日志将输出到文件（轮转，每个文件最大 5MB）",
                     );
                 }
             });
@@ -454,6 +515,14 @@ impl XingDaApp {
         let dump_text = self.dump_text;
         let include_summary = !self.no_summary;
         let enable_ocr = self.enable_ocr;
+        let summary_only = self.summary_only;
+        let no_merge = self.no_merge;
+        let style_preset = self.style_preset;
+        let log_file_path = if self.log_file_path.is_empty() {
+            None
+        } else {
+            Some(self.log_file_path.clone())
+        };
 
         let (log_tx, log_rx) = mpsc::channel();
         let (result_tx, result_rx) = mpsc::channel();
@@ -476,6 +545,10 @@ impl XingDaApp {
                 dump_text,
                 include_summary,
                 enable_ocr,
+                summary_only,
+                no_merge,
+                style_preset,
+                log_file_path.as_deref(),
                 &send_log,
             );
 
@@ -846,16 +919,35 @@ fn process_in_thread(
     dump_text: bool,
     include_summary: bool,
     enable_ocr: bool,
+    summary_only: bool,
+    no_merge: bool,
+    style_preset: Option<StylePreset>,
+    log_file_path: Option<&str>,
     send_log: &dyn Fn(LogMessage),
 ) -> Result<String, String> {
     let rules = load_rules(rules_path).map_err(|e| format!("加载配置失败: {}", e))?;
-    let excel_style = load_excel_style();
+    let mut excel_style = load_excel_style();
+    if let Some(preset) = style_preset {
+        excel_style = excel_style.apply_preset(preset);
+        send_log(LogMessage::Info(format!("已应用样式: {:?}", preset)));
+    }
 
     send_log(LogMessage::Info("正在解析 PDF...".to_string()));
 
     let parser_config = ParserConfig::default();
-    let mut data = parse_pdf(pdf_path, enable_ocr, false, &parser_config)
+    let mut data = parse_pdf(pdf_path, enable_ocr, no_merge, &parser_config)
         .map_err(|e| format!("PDF解析失败: {}", e))?;
+
+    // 导出原始文本
+    if dump_text {
+        let pdf_path_obj = std::path::Path::new(pdf_path);
+        let txt_path = pdf_path_obj.with_extension("txt");
+        if let Err(e) = std::fs::write(&txt_path, &data.raw_text) {
+            send_log(LogMessage::Warning(format!("导出原始文本失败: {}", e)));
+        } else {
+            send_log(LogMessage::Info(format!("原始文本已导出: {}", txt_path.display())));
+        }
+    }
 
     send_log(LogMessage::Info(format!(
         "提取 {} 条考核记录",
@@ -907,9 +999,23 @@ fn process_in_thread(
         &rules.area_order,
         &excel_style,
         include_summary,
-        false,
+        summary_only,
     )
     .map_err(|e| format!("Excel生成失败: {}", e))?;
+
+    // 日志文件（如果指定）
+    if let Some(log_path) = log_file_path {
+        let log_content = format!(
+            "=== 处理日志 ===\n文件: {}\n{}\n",
+            pdf_path,
+            summary
+        );
+        if let Err(e) = std::fs::write(log_path, &log_content) {
+            send_log(LogMessage::Warning(format!("日志文件写入失败: {}", e)));
+        } else {
+            send_log(LogMessage::Info(format!("日志已保存: {}", log_path)));
+        }
+    }
 
     Ok(output_path_str.to_string())
 }

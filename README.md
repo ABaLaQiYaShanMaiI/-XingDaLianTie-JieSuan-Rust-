@@ -140,7 +140,7 @@ cargo build --release
 ### 分类规则 (classify_rules.yaml)
 
 ```yaml
-department_ratio: 0.3
+department_ratio: 0.01
 areas:
   - name: "事业部"
     priority: 1
