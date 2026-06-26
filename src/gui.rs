@@ -1,7 +1,7 @@
 //! GUI 模块
 //! =======
 //! 提供图形化用户界面 (egui/eframe)。
-//! 支持: 文件选择、PDF 处理、实时日志显示。
+//! 支持: 文件选择、PDF 处理、实时日志显示、文件拖拽、环境检测。
 
 use std::sync::mpsc;
 use std::thread;
@@ -24,6 +24,23 @@ enum LogMessage {
     Success(String),
     Warning(String),
     Error(String),
+}
+
+/// 外部工具检测状态
+#[derive(Debug, Clone, PartialEq)]
+enum ToolStatus {
+    /// 已检测到
+    Found(String),
+    /// 未检测到
+    NotFound,
+    /// 未检测（初始状态）
+    Unknown,
+}
+
+impl ToolStatus {
+    fn is_found(&self) -> bool {
+        matches!(self, ToolStatus::Found(_))
+    }
 }
 
 /// GUI 应用状态
@@ -49,6 +66,14 @@ struct XingDaApp {
 
     // 输出结果
     last_output: Option<String>,
+
+    // 环境检测状态
+    ghostscript_status: ToolStatus,
+    tesseract_status: ToolStatus,
+    env_check_done: bool,
+
+    // 拖拽提示
+    drag_hover: bool,
 }
 
 impl Default for XingDaApp {
@@ -66,26 +91,69 @@ impl Default for XingDaApp {
             log_receiver: None,
             result_receiver: None,
             last_output: None,
+            ghostscript_status: ToolStatus::Unknown,
+            tesseract_status: ToolStatus::Unknown,
+            env_check_done: false,
+            drag_hover: false,
         }
     }
 }
 
 impl eframe::App for XingDaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // ---- 首次运行环境检测 ----
+        if !self.env_check_done {
+            self.run_env_check();
+            self.env_check_done = true;
+        }
+
+        // ---- 处理拖拽文件 ----
+        self.handle_dropped_files(ctx);
+
         // 轮询后台处理结果
         self.poll_results();
+
+        // ---- 拖拽悬停高亮 ----
+        if self.drag_hover {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
+                "📂 释放以加载 PDF - 兴达结算单工具 v{}",
+                VERSION
+            )));
+        } else {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
+                "兴达炼铁保产事业部 结算单明细工具 v{}",
+                VERSION
+            )));
+        }
 
         // ---- 顶部面板 ----
         egui::TopBottomPanel::top("header").show(ctx, |ui| {
             ui.heading(format!("兴达炼铁保产事业部 · 结算单明细工具 v{}", VERSION));
             ui.label("PDF 结算单 → 自动提取考核明细 → 生成 Excel");
             if !self.processing {
-                ui.colored_label(egui::Color32::from_rgb(0, 120, 212), "📂 拖拽 PDF 文件到此处");
+                if self.drag_hover {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(0, 200, 100),
+                        "📂 释放 PDF 文件到此处！",
+                    );
+                } else {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(0, 120, 212),
+                        "📂 拖拽 PDF 文件到此处，或使用下方文件浏览器",
+                    );
+                }
             }
         });
 
         // ---- 中央面板 ----
         egui::CentralPanel::default().show(ctx, |ui| {
+            // --- 环境检测状态 ---
+            ui.collapsing("🔧 环境检测", |ui| {
+                self.render_env_status(ui);
+            });
+
+            ui.separator();
+
             // 文件选择区域
             ui.collapsing("📄 文件选择", |ui| {
                 // PDF 文件
@@ -134,10 +202,29 @@ impl eframe::App for XingDaApp {
 
             // 选项
             ui.collapsing("⚙ 选项", |ui| {
-                ui.checkbox(&mut self.validate_only, "仅校验不生成 Excel（--validate-only）");
+                ui.checkbox(
+                    &mut self.validate_only,
+                    "仅校验不生成 Excel（--validate-only）",
+                );
                 ui.checkbox(&mut self.dump_text, "同时导出原始文本（--dump-text）");
-                ui.checkbox(&mut self.no_summary, "不生成汇总信息区域（--no-summary）");
-                ui.checkbox(&mut self.enable_ocr, "启用 OCR（PDF 无文本层时使用 Tesseract+Ghostscript）");
+                ui.checkbox(
+                    &mut self.no_summary,
+                    "不生成汇总信息区域（--no-summary）",
+                );
+                ui.checkbox(
+                    &mut self.enable_ocr,
+                    "启用 OCR（PDF 无文本层时使用 Tesseract+Ghostscript）",
+                );
+                // 如果 OCR 已启用但工具未安装，给出警告
+                if self.enable_ocr
+                    && (!self.ghostscript_status.is_found()
+                        || !self.tesseract_status.is_found())
+                {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(255, 170, 60),
+                        "⚠ 注意：OCR 工具未完全安装，请检查「环境检测」面板",
+                    );
+                }
             });
 
             ui.separator();
@@ -158,6 +245,10 @@ impl eframe::App for XingDaApp {
 
                 if ui.button("📁 打开输出目录").clicked() {
                     self.open_output_dir();
+                }
+
+                if ui.button("🔄 重新检测环境").clicked() {
+                    self.run_env_check();
                 }
 
                 if ui.button("清空日志").clicked() {
@@ -210,19 +301,142 @@ impl eframe::App for XingDaApp {
 
         // ---- 底部状态栏 ----
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-            if let Some(ref output) = self.last_output {
-                ui.colored_label(
-                    egui::Color32::from_rgb(106, 153, 85),
-                    format!("✅ 输出: {}", output),
-                );
-            } else {
-                ui.colored_label(egui::Color32::GRAY, "就绪");
-            }
+            // 工具状态快速指示器
+            ui.horizontal(|ui| {
+                self.render_tool_pill(ui, "GS", &self.ghostscript_status);
+                ui.separator();
+                self.render_tool_pill(ui, "Tesseract", &self.tesseract_status);
+                ui.separator();
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if let Some(ref output) = self.last_output {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(106, 153, 85),
+                            format!("✅ 输出: {}", output),
+                        );
+                    } else {
+                        ui.colored_label(egui::Color32::GRAY, "就绪");
+                    }
+                });
+            });
         });
     }
 }
 
 impl XingDaApp {
+    /// 运行环境检测
+    fn run_env_check(&mut self) {
+        self.ghostscript_status = detect_ghostscript();
+        self.tesseract_status = detect_tesseract();
+        self.env_check_done = true;
+    }
+
+    /// 处理拖拽文件
+    fn handle_dropped_files(&mut self, ctx: &egui::Context) {
+        let dropped = ctx.input(|i| {
+            let files = i.raw.dropped_files.clone();
+            let hovering = i.raw.hovered_files.len() > 0;
+            (files, hovering)
+        });
+
+        self.drag_hover = dropped.1 && !self.processing;
+
+        if let Some(file) = dropped.0.first() {
+            if let Some(path) = &file.path {
+                let path_str = path.to_string_lossy().to_lowercase();
+                if path_str.ends_with(".pdf") {
+                    self.pdf_path = path.to_string_lossy().to_string();
+                    info!("拖拽加载 PDF: {}", self.pdf_path);
+                }
+            }
+        }
+    }
+
+    /// 渲染环境检测面板
+    fn render_env_status(&self, ui: &mut egui::Ui) {
+        ui.label("外部工具检测（用于 OCR 功能）：");
+        ui.add_space(4.0);
+
+        // Ghostscript
+        ui.horizontal(|ui| {
+            match &self.ghostscript_status {
+                ToolStatus::Found(path) => {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(106, 153, 85),
+                        "✅",
+                    );
+                    ui.label(format!("Ghostscript: {}", path));
+                }
+                ToolStatus::NotFound => {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(244, 71, 71),
+                        "❌",
+                    );
+                    ui.label("Ghostscript: 未安装");
+                    ui.hyperlink_to(
+                        "下载",
+                        "https://ghostscript.com/releases/gsdnld.html",
+                    );
+                }
+                ToolStatus::Unknown => {
+                    ui.colored_label(
+                        egui::Color32::GRAY,
+                        "⏳",
+                    );
+                    ui.label("Ghostscript: 检测中...");
+                }
+            }
+        });
+
+        // Tesseract
+        ui.horizontal(|ui| {
+            match &self.tesseract_status {
+                ToolStatus::Found(path) => {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(106, 153, 85),
+                        "✅",
+                    );
+                    ui.label(format!("Tesseract: {}", path));
+                }
+                ToolStatus::NotFound => {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(244, 71, 71),
+                        "❌",
+                    );
+                    ui.label("Tesseract: 未安装（需勾选 chi_sim 中文语言包）");
+                    ui.hyperlink_to(
+                        "下载",
+                        "https://github.com/UB-Mannheim/tesseract/wiki",
+                    );
+                }
+                ToolStatus::Unknown => {
+                    ui.colored_label(
+                        egui::Color32::GRAY,
+                        "⏳",
+                    );
+                    ui.label("Tesseract: 检测中...");
+                }
+            }
+        });
+
+        ui.add_space(4.0);
+        if !self.ghostscript_status.is_found() || !self.tesseract_status.is_found() {
+            ui.colored_label(
+                egui::Color32::from_rgb(255, 170, 60),
+                "ℹ 未安装的工具不影响普通 PDF 处理，仅 OCR 扫描件时需要。",
+            );
+        }
+    }
+
+    /// 渲染底部状态栏的工具状态指示器
+    fn render_tool_pill(&self, ui: &mut egui::Ui, label: &str, status: &ToolStatus) {
+        let (color, symbol) = match status {
+            ToolStatus::Found(_) => (egui::Color32::from_rgb(106, 153, 85), "●"),
+            ToolStatus::NotFound => (egui::Color32::from_rgb(244, 71, 71), "●"),
+            ToolStatus::Unknown => (egui::Color32::GRAY, "○"),
+        };
+        ui.colored_label(color, format!("{} {}", symbol, label));
+    }
+
     /// 开始后台处理
     fn start_processing(&mut self) {
         self.processing = true;
@@ -254,7 +468,6 @@ impl XingDaApp {
 
             send_log(LogMessage::Info(format!("🚀 开始处理: {}", pdf_path)));
 
-            // 处理
             let result = process_in_thread(
                 &pdf_path,
                 &output_dir,
@@ -269,10 +482,15 @@ impl XingDaApp {
             match result {
                 Ok(output) => {
                     if output.is_empty() {
-                        send_log(LogMessage::Warning("⚠ 处理完成但未生成文件".to_string()));
+                        send_log(LogMessage::Warning(
+                            "⚠ 处理完成但未生成文件".to_string(),
+                        ));
                         let _ = result_tx.send(Err("无文件生成".to_string()));
                     } else {
-                        send_log(LogMessage::Success(format!("✅ 完成！输出文件: {}", output)));
+                        send_log(LogMessage::Success(format!(
+                            "✅ 完成！输出文件: {}",
+                            output
+                        )));
                         let _ = result_tx.send(Ok(output));
                     }
                 }
@@ -286,14 +504,12 @@ impl XingDaApp {
 
     /// 轮询后台处理结果
     fn poll_results(&mut self) {
-        // 接收日志
         if let Some(ref rx) = self.log_receiver {
             while let Ok(msg) = rx.try_recv() {
                 self.log_messages.push(msg);
             }
         }
 
-        // 接收结果
         if let Some(ref rx) = self.result_receiver {
             if let Ok(result) = rx.try_recv() {
                 self.processing = false;
@@ -322,6 +538,130 @@ impl XingDaApp {
         }
     }
 }
+
+// ============================================================
+// 环境检测函数
+// ============================================================
+
+/// 检测 Ghostscript 安装
+fn detect_ghostscript() -> ToolStatus {
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        // 先尝试 PATH
+        if let Ok(output) = Command::new("where").arg("gswin64c.exe").output() {
+            if output.status.success() {
+                if let Some(line) = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .next()
+                {
+                    return ToolStatus::Found(line.to_string());
+                }
+            }
+        }
+        // 再尝试常见安装路径
+        let candidates = [
+            r"C:\Program Files\gs\gs10.05.0\bin\gswin64c.exe", // latest stable
+        ];
+        // 扫描 Program Files\gs 目录
+        use std::path::Path;
+        let base_dirs = [
+            r"C:\Program Files\gs",
+            r"C:\Program Files (x86)\gs",
+        ];
+        for base in &base_dirs {
+            let base_path = Path::new(base);
+            if base_path.exists() {
+                if let Ok(entries) = std::fs::read_dir(base_path) {
+                    for entry in entries.flatten() {
+                        let dir = entry.path();
+                        if dir.is_dir() {
+                            let gs = dir.join("bin").join("gswin64c.exe");
+                            if gs.exists() {
+                                return ToolStatus::Found(
+                                    gs.to_string_lossy().to_string(),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for p in &candidates {
+            if Path::new(p).exists() {
+                return ToolStatus::Found(p.to_string());
+            }
+        }
+        ToolStatus::NotFound
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Ok(output) = std::process::Command::new("which")
+            .arg("gs")
+            .output()
+        {
+            if output.status.success() {
+                if let Some(line) = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .next()
+                {
+                    return ToolStatus::Found(line.to_string());
+                }
+            }
+        }
+        ToolStatus::NotFound
+    }
+}
+
+/// 检测 Tesseract 安装
+fn detect_tesseract() -> ToolStatus {
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        if let Ok(output) = Command::new("where").arg("tesseract.exe").output() {
+            if output.status.success() {
+                if let Some(line) = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .next()
+                {
+                    return ToolStatus::Found(line.to_string());
+                }
+            }
+        }
+        use std::path::Path;
+        let candidates = [
+            r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+            r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        ];
+        for p in &candidates {
+            if Path::new(p).exists() {
+                return ToolStatus::Found(p.to_string());
+            }
+        }
+        ToolStatus::NotFound
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Ok(output) = std::process::Command::new("which")
+            .arg("tesseract")
+            .output()
+        {
+            if output.status.success() {
+                if let Some(line) = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .next()
+                {
+                    return ToolStatus::Found(line.to_string());
+                }
+            }
+        }
+        ToolStatus::NotFound
+    }
+}
+
+// ============================================================
+// 后台处理
+// ============================================================
 
 /// 在后台线程中执行处理
 fn process_in_thread(
@@ -383,7 +723,6 @@ fn process_in_thread(
         .to_str()
         .ok_or_else(|| "输出路径包含非法字符".to_string())?;
 
-    // 确保目录存在
     if let Some(parent) = output_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {}", e))?;
     }
@@ -394,19 +733,23 @@ fn process_in_thread(
         &rules.area_order,
         &excel_style,
         include_summary,
-        false, // GUI mode always includes detail sheets
+        false,
     )
     .map_err(|e| format!("Excel生成失败: {}", e))?;
 
     Ok(output_path_str.to_string())
 }
 
+// ============================================================
+// GUI 启动
+// ============================================================
+
 /// 启动 GUI
 pub fn launch_gui() {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("兴达炼铁保产事业部 结算单明细工具")
-            .with_inner_size([680.0, 620.0])
+            .with_inner_size([680.0, 700.0])
             .with_min_inner_size([600.0, 500.0]),
         ..Default::default()
     };
@@ -415,7 +758,6 @@ pub fn launch_gui() {
         "XingDa JieSuan",
         options,
         Box::new(|cc| {
-            // 加载中文字体以解决 GUI 乱码
             setup_chinese_fonts(&cc.egui_ctx);
             Ok(Box::new(XingDaApp::default()))
         }),
@@ -425,30 +767,15 @@ pub fn launch_gui() {
 }
 
 /// 从系统字体目录加载中文字体
-///
-/// 自动尝试以下字体（优先级递减）：
-/// 1. 微软雅黑（推荐）
-/// 2. 宋体
-/// 3. 黑体
-/// 4. 仿宋
-///
-/// 如果所有字体加载失败，使用 egui 默认字体（不阻止启动）
-///
-/// # 兼容性说明
-///
-/// Windows 7/8+ 均包含微软雅黑，无需担心字体缺失。
-/// 但建议在 README 中说明字体依赖。
 fn setup_chinese_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
 
-    // Windows 7/8+ 均包含微软雅黑，无需担心字体缺失
-    // 但建议在 README 中说明字体依赖
     let font_paths = [
-        "C:\\Windows\\Fonts\\msyh.ttc",   // 微软雅黑
+        "C:\\Windows\\Fonts\\msyh.ttc",
         "C:\\Windows\\Fonts\\msyh.ttf",
-        "C:\\Windows\\Fonts\\simsun.ttc",  // 宋体
-        "C:\\Windows\\Fonts\\simhei.ttf",  // 黑体
-        "C:\\Windows\\Fonts\\simfang.ttf", // 仿宋
+        "C:\\Windows\\Fonts\\simsun.ttc",
+        "C:\\Windows\\Fonts\\simhei.ttf",
+        "C:\\Windows\\Fonts\\simfang.ttf",
     ];
 
     let font_name = "chinese_font";
@@ -461,7 +788,6 @@ fn setup_chinese_fonts(ctx: &egui::Context) {
                 std::sync::Arc::new(egui::FontData::from_owned(bytes.to_vec())),
             );
 
-            // 将中文字体插入到 Proportional 和 Monospace 字体族的最前面
             fonts
                 .families
                 .entry(egui::FontFamily::Proportional)
