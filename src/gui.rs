@@ -709,9 +709,12 @@ fn process_in_thread(
     // 导出原始文本
     if dump_text {
         let pdf_path_obj = std::path::Path::new(pdf_path);
-        let pdf_stem = pdf_path_obj.file_stem().unwrap_or_default();
+        let pdf_stem = pdf_path_obj
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("output");
         let txt_path = std::path::Path::new(output_dir)
-            .join(format!("{}.txt", pdf_stem.to_str().unwrap()));
+            .join(format!("{}.txt", pdf_stem));
         let header = format!(
             "=== PDF 原始文本导出 ===\n文件: {}\n提取字符数: {}\n=========================\n\n",
             pdf_path,

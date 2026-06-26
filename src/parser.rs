@@ -271,19 +271,29 @@ fn extract_final_number(text: &str) -> Option<f64> {
 /// 提取费用信息
 fn extract_fee_info(data: &mut SettlementData, full_text: &str, config: &ParserConfig) {
     // 策略1: 从底部结算公式合计行提取
+    // 仅当关键字段（pdf_stated_total + work_fee）都有效时才采用，否则回退到后续策略
     let sum_re = Regex::new(r"合计\s+(\d[\d,.]*)\s+(\d[\d,.]*)\s+(\d[\d,.]*)\s+(\d[\d,.]*)").unwrap();
     if let Some(caps) = sum_re.captures(full_text) {
-        data.work_fee = parse_amount(caps.get(1)).unwrap_or(0.0);
-        data.pdf_stated_total = parse_amount(caps.get(2));
-        data.total_reward = parse_amount(caps.get(3)).unwrap_or(0.0);
-        data.settlement_amount = parse_amount(caps.get(4)).unwrap_or(0.0);
-        info!("  作业费用: {:.2}", data.work_fee);
-        if let Some(total) = data.pdf_stated_total {
-            info!("  PDF 考核金额合计: {:.2}", total);
+        let work_fee = parse_amount(caps.get(1)).unwrap_or(0.0);
+        let pdf_stated = parse_amount(caps.get(2));
+        let total_reward = parse_amount(caps.get(3)).unwrap_or(0.0);
+        let settlement = parse_amount(caps.get(4)).unwrap_or(0.0);
+
+        // 有效性检查：关键字段缺失则继续后续策略
+        if pdf_stated.is_some() && work_fee > 0.0 {
+            data.work_fee = work_fee;
+            data.pdf_stated_total = pdf_stated;
+            data.total_reward = total_reward;
+            data.settlement_amount = settlement;
+            info!("  作业费用: {:.2}", data.work_fee);
+            if let Some(total) = data.pdf_stated_total {
+                info!("  PDF 考核金额合计: {:.2}", total);
+            }
+            info!("  嘉奖金额: {:.2}", data.total_reward);
+            info!("  当月结算费用: {:.2}", data.settlement_amount);
+            return;
         }
-        info!("  嘉奖金额: {:.2}", data.total_reward);
-        info!("  当月结算费用: {:.2}", data.settlement_amount);
-        return;
+        debug!("  策略1 合计行关键字段无效（work_fee={}, pdf_total={:?}），回退后续策略", work_fee, pdf_stated);
     }
 
     // 策略2: 单独匹配作业费用小计
@@ -437,9 +447,10 @@ fn extract_reward_amount(full_text: &str, config: &ParserConfig) -> f64 {
                 .filter_map(|m| m.as_str().replace(",", "").parse::<f64>().ok())
                 .filter(|&a| a > min_threshold)
                 .collect();
-            if !amounts.is_empty() {
-                amounts.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
-                let val = amounts[0];
+            if let Some(val) = amounts
+                .into_iter()
+                .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            {
                 debug!("  嘉奖金额（策略4: 区间最大值）: {:.2}", val);
                 return val;
             }
@@ -611,9 +622,11 @@ fn build_text_record(lines: &[String], config: &ParserConfig) -> Option<Assessme
         }
     }
 
-    // 条款回退：从描述中提取中文数字条款编号（如"二、"、"（三）"等）
+    // 条款回退：从描述中提取条款编号（中文数字、阿拉伯数字 + 顿号/点号）
+    // 匹配示例："（二）"、"1."、"（3）"等
     if clauses.is_empty() {
-        let fallback_clause_re = Regex::new(r"[（(][一二三四五六七八九十]+[）)]").unwrap();
+        let fallback_clause_re =
+            Regex::new(r"[（(][一二三四五六七八九十\d]+[）)]|\d+\.[\s\u{00A0}]").unwrap();
         for m in fallback_clause_re.find_iter(&remainder) {
             clauses.push(m.as_str().to_string());
         }

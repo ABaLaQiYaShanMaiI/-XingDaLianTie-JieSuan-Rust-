@@ -343,15 +343,17 @@ fn perform_ocr_tesseract(pdf_path: &str, config: &ParserConfig) -> Result<OcrRes
     fs::create_dir_all(&temp_dir)
         .map_err(|e| XingDaError::Pdf(format!("无法创建 OCR 临时目录: {}", e)))?;
 
-    // 清理函数（最佳实践）
-    let cleanup = || {
-        if let Err(e) = fs::remove_dir_all(&temp_dir) {
-            debug!("清理 OCR 临时文件失败: {}", e);
+    // RAII 清理：函数退出（包括提前 return / panic unwind）时自动删除临时目录
+    struct TempDirGuard(PathBuf);
+    impl Drop for TempDirGuard {
+        fn drop(&mut self) {
+            if let Err(e) = fs::remove_dir_all(&self.0) {
+                debug!("清理 OCR 临时文件失败: {}", e);
+            }
         }
-    };
-
-    // 确保退出时清理
-    let _cleanup_guard = scopeguard::guard((), |_| cleanup());
+    }
+    let _cleanup_guard = TempDirGuard(temp_dir.clone());
+    let temp_dir = _cleanup_guard.0.clone();
 
     // ---- 步骤 1: PDF → PNG (Ghostscript) ----
     let dpi = config.ocr_dpi;
@@ -381,7 +383,6 @@ fn perform_ocr_tesseract(pdf_path: &str, config: &ParserConfig) -> Result<OcrRes
 
     if !gs_cmd.status.success() {
         let stderr = String::from_utf8_lossy(&gs_cmd.stderr);
-        cleanup();
         return Err(XingDaError::Pdf(format!(
             "Ghostscript 渲染 PDF 页面失败:\n{}", stderr
         )));
@@ -402,7 +403,6 @@ fn perform_ocr_tesseract(pdf_path: &str, config: &ParserConfig) -> Result<OcrRes
     }
 
     if png_files.is_empty() {
-        cleanup();
         return Err(XingDaError::Pdf("Ghostscript 未生成任何页面图像".to_string()));
     }
 
@@ -485,7 +485,6 @@ fn perform_ocr_tesseract(pdf_path: &str, config: &ParserConfig) -> Result<OcrRes
         all_text.len(), ocr_total_elapsed.as_secs_f64());
 
     if all_text.trim().is_empty() {
-        cleanup();
         return Err(XingDaError::Pdf(
             "OCR 未能从 PDF 中提取任何文本。\n\
              可能原因:\n\

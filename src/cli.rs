@@ -93,11 +93,11 @@ pub struct Cli {
     #[arg(long = "no-merge", default_value_t = false)]
     pub no_merge: bool,
 
-    /// 嘉奖金额扫描行数（默认 5）
+    /// 嘉奖金额扫描行数（当嘉奖金额距"嘉奖金额"行较远时增大此值，默认 5）
     #[arg(long = "reward-scan-lines", default_value = "5")]
     pub reward_scan_lines: usize,
 
-    /// 嘉奖金额过滤阈值（元，默认 10.0）
+    /// 嘉奖金额最小过滤阈值（元，低于此值视为噪音，需调小时可降低，默认 10.0）
     #[arg(long = "reward-filter-threshold", default_value = "10.0")]
     pub reward_filter_threshold: f64,
 }
@@ -186,6 +186,21 @@ impl std::io::Write for LogFileWriter {
     }
 }
 
+/// PDF 处理选项（将 process_single 的 16 个参数提炼为结构体）
+pub struct PdfProcessOptions<'a> {
+    pub output_dir: Option<&'a str>,
+    pub rules_path: Option<&'a str>,
+    pub validate_only: bool,
+    pub dump_text: bool,
+    pub include_summary: bool,
+    pub summary_only: bool,
+    pub output_name: Option<&'a str>,
+    pub enable_ocr: bool,
+    pub no_merge: bool,
+    pub parser_config: &'a ParserConfig,
+    pub style: Option<StylePreset>,
+}
+
 /// 核心处理流程：解析 + 分类 + 校验，返回 SettlementData 和配置引用，
 /// 供 CLI 和 GUI 复用。
 ///
@@ -213,9 +228,7 @@ pub fn process_pdf_core(
     Ok((data, rules, excel_style, is_valid))
 }
 
-/// 处理单个 PDF 文件
-///
-/// `output_dir`: 如果为 `None`，默认输出到当前工作目录（"."）。
+/// 处理单个 PDF 文件（委托给 process_single_with_options）
 pub fn process_single(
     pdf_path: &str,
     output_dir: Option<&str>,
@@ -230,30 +243,51 @@ pub fn process_single(
     parser_config: &ParserConfig,
     style: Option<StylePreset>,
 ) -> Result<String> {
+    let options = PdfProcessOptions {
+        output_dir,
+        rules_path,
+        validate_only,
+        dump_text,
+        include_summary,
+        summary_only,
+        output_name,
+        enable_ocr,
+        no_merge,
+        parser_config,
+        style,
+    };
+    process_single_with_options(pdf_path, &options)
+}
+
+/// 使用 PdfProcessOptions 处理单个 PDF 文件（推荐新调用方使用）
+pub fn process_single_with_options(
+    pdf_path: &str,
+    options: &PdfProcessOptions,
+) -> Result<String> {
     let pdf_p = Path::new(pdf_path);
     if !pdf_p.exists() {
         return Err(XingDaError::Parse(format!("PDF 文件不存在: {}", pdf_path)));
     }
 
-    let out_dir = PathBuf::from(output_dir.unwrap_or("."));
+    let out_dir = PathBuf::from(options.output_dir.unwrap_or("."));
     std::fs::create_dir_all(&out_dir)
         .map_err(|e| XingDaError::Parse(format!("无法创建输出目录: {}", e)))?;
 
     // --- 核心处理：解析 + 分类 + 校验 ---
     let (mut data, rules, excel_style, is_valid) = process_pdf_core(
         pdf_path,
-        rules_path,
-        enable_ocr,
-        no_merge,
-        parser_config,
-        style,
+        options.rules_path,
+        options.enable_ocr,
+        options.no_merge,
+        options.parser_config,
+        options.style,
     )?;
 
     let summary = generate_validation_summary(&data);
     info!("\n{}", summary);
 
-    // 导出原始文本（CLI 特有：指定输出目录）
-    if dump_text {
+    // 导出原始文本
+    if options.dump_text {
         let txt_path = pdf_p.with_extension("txt");
         let txt_filename = txt_path
             .file_name()
@@ -270,7 +304,7 @@ pub fn process_single(
         info!("原始文本已导出: {} ({} 字符)", txt_out.display(), data.raw_text.len());
     }
 
-    if validate_only {
+    if options.validate_only {
         if is_valid {
             info!("--validate-only 模式：解析和校验完成，未生成 Excel");
         } else {
@@ -280,7 +314,7 @@ pub fn process_single(
     }
 
     // --- 生成 Excel ---
-    let excel_name = if let Some(name) = output_name {
+    let excel_name = if let Some(name) = options.output_name {
         let mut n = name.to_string();
         if !n.ends_with(".xlsx") {
             n.push_str(".xlsx");
@@ -304,8 +338,8 @@ pub fn process_single(
         output_path_str,
         &rules.area_order,
         &excel_style,
-        include_summary,
-        summary_only,
+        options.include_summary,
+        options.summary_only,
     )?;
 
     let records_count = data.all_records.len();

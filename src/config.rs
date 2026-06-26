@@ -40,6 +40,32 @@ pub struct AreaRule {
 }
 
 impl AreaRule {
+    /// 创建 AreaRule 并自动计算 `has_match_rules`
+    pub fn new(
+        name: String,
+        priority: i32,
+        item_numbers: Vec<i32>,
+        keywords: Vec<String>,
+        equipment_prefixes: Vec<String>,
+        description_patterns: Vec<String>,
+    ) -> Self {
+        let has_match = !item_numbers.is_empty()
+            || !keywords.is_empty()
+            || !equipment_prefixes.is_empty()
+            || !description_patterns.is_empty();
+        Self {
+            name,
+            priority,
+            item_numbers,
+            keywords,
+            equipment_prefixes,
+            description_patterns,
+            compiled_equipment_re: vec![],
+            compiled_pattern_re: vec![],
+            has_match_rules: has_match,
+        }
+    }
+
     pub fn compile_regexes(&mut self) -> Result<()> {
         self.compiled_equipment_re = self
             .equipment_prefixes
@@ -345,35 +371,25 @@ fn build_rules_from_raw(raw: RawRules) -> Result<ClassifyRules> {
                     equipment_prefixes: None,
                     description_patterns: None,
                 });
-                let has_match = !match_rules.item_numbers.as_ref().map_or(true, |v| v.is_empty())
-                    || !match_rules.keywords.as_ref().map_or(true, |v| v.is_empty())
-                    || !match_rules.equipment_prefixes.as_ref().map_or(true, |v| v.is_empty())
-                    || !match_rules.description_patterns.as_ref().map_or(true, |v| v.is_empty());
-                AreaRule {
-                    name: ra.name,
-                    priority: ra.priority.unwrap_or(99),
-                    item_numbers: match_rules.item_numbers.unwrap_or_default(),
-                    keywords: match_rules.keywords.unwrap_or_default(),
-                    equipment_prefixes: match_rules.equipment_prefixes.unwrap_or_default(),
-                    description_patterns: match_rules.description_patterns.unwrap_or_default(),
-                    compiled_equipment_re: vec![],
-                    compiled_pattern_re: vec![],
-                    has_match_rules: has_match,
-                }
+                AreaRule::new(
+                    ra.name,
+                    ra.priority.unwrap_or(99),
+                    match_rules.item_numbers.unwrap_or_default(),
+                    match_rules.keywords.unwrap_or_default(),
+                    match_rules.equipment_prefixes.unwrap_or_default(),
+                    match_rules.description_patterns.unwrap_or_default(),
+                )
             })
             .collect(),
         None => {
-            vec![AreaRule {
-                name: "未分类".to_string(),
-                priority: 99,
-                item_numbers: vec![],
-                keywords: vec![],
-                equipment_prefixes: vec![],
-                description_patterns: vec![],
-                compiled_equipment_re: vec![],
-                compiled_pattern_re: vec![],
-                has_match_rules: false,
-            }]
+            vec![AreaRule::new(
+                "未分类".to_string(),
+                99,
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+            )]
         }
     };
 
@@ -382,17 +398,14 @@ fn build_rules_from_raw(raw: RawRules) -> Result<ClassifyRules> {
     // 确保有兜底规则（未分类）
     let has_fallback = areas.iter().any(|a| a.name == "未分类");
     if !has_fallback {
-        areas.push(AreaRule {
-            name: "未分类".to_string(),
-            priority: 99,
-            item_numbers: vec![],
-            keywords: vec![],
-            equipment_prefixes: vec![],
-            description_patterns: vec![],
-            compiled_equipment_re: vec![],
-            compiled_pattern_re: vec![],
-            has_match_rules: false,
-        });
+        areas.push(AreaRule::new(
+            "未分类".to_string(),
+            99,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        ));
     }
 
     for area in &mut areas {
