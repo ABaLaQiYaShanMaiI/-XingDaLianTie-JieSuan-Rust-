@@ -14,7 +14,7 @@ use crate::models::{AssessmentRecord, SettlementData};
 use crate::config::ParserConfig;
 
 // ============================================================
-// 懒加载正则（Lazy Statics）
+// 加载正则
 // ============================================================
 
 /// 考核记录描述前缀（共用，兼容空格情况）
@@ -226,10 +226,10 @@ fn extract_contract_info(data: &mut SettlementData, full_text: &str) {
 
 /// 从文本中提取最后一个数字作为金额
 fn extract_final_number(text: &str) -> Option<f64> {
-    let num_re = Regex::new(r"(?<![-.\d])(\d+(?:,\d+)*(?:\.\d+)?)").unwrap();
-    let matches: Vec<_> = num_re.captures_iter(text).collect();
-    matches.last()
-        .and_then(|caps| caps.get(1))
+    let num_re = Regex::new(r"\d+(?:,\d+)*(?:\.\d+)?").unwrap();
+    num_re.captures_iter(text)
+        .last()
+        .and_then(|caps| caps.get(0))
         .and_then(|m| m.as_str().replace(",", "").parse::<f64>().ok())
 }
 
@@ -406,10 +406,51 @@ fn extract_reward_amount(full_text: &str) -> f64 {
 // 文本行提取考核记录
 // ============================================================
 
+/// 预处理：合并被 PDF 文本提取拆分的行
+///
+/// 问题：PDF 文本提取中，序号和描述常分为两行：
+///   "2"          ← 纯序号行
+///   "  3月 11日，原料分厂..."  ← 描述从下行开始
+/// 合并为 "2 3月 11日，原料分厂..." 以便正则匹配。
+fn pre_merge_split_lines(raw_lines: &[&str]) -> Vec<String> {
+    let mut merged: Vec<String> = Vec::new();
+    let approx_idx_re = Regex::new(r"^\s*\d{1,2}\s*$").unwrap();
+
+    let len = raw_lines.len();
+    let mut i = 0;
+    while i < len {
+        let line = raw_lines[i].trim();
+        if approx_idx_re.is_match(line) && i + 1 < len {
+            let idx_num: i32 = line.parse().unwrap_or(0);
+            // 仅当 1..=99 的合法序号 + 下一行以日期开头时合并
+            if idx_num >= 1 && idx_num <= 99
+                && i + 1 < len
+                && assessment_desc_re().is_match(raw_lines[i + 1].trim())
+            {
+                merged.push(format!("{} {}", line, raw_lines[i + 1].trim()));
+                i += 2;
+                continue;
+            }
+        }
+        merged.push(raw_lines[i].to_string());
+        i += 1;
+    }
+
+    merged
+}
+
 /// 从 extract_text 的原始文本中解析考核记录
 fn extract_from_text(full_text: &str, config: &ParserConfig) -> Vec<AssessmentRecord> {
     let mut records: Vec<AssessmentRecord> = Vec::new();
-    let lines: Vec<&str> = full_text.split('\n').collect();
+    let raw_lines: Vec<&str> = full_text.split('\n').collect();
+
+    debug!("原始行数: {}", raw_lines.len());
+
+    // 预处理：合并序号与描述被 PDF 文本提取拆分到两行的情况
+    // 例如 "2" 单独一行，下一行 "3月 11日，..." → 合并为 "2 3月 11日，..."
+    let lines = pre_merge_split_lines(&raw_lines);
+
+    debug!("合并后行数: {}", lines.len());
 
     let mut current_record_lines: Vec<String> = Vec::new();
     let mut stopped = false;
@@ -424,25 +465,24 @@ fn extract_from_text(full_text: &str, config: &ParserConfig) -> Vec<AssessmentRe
             continue;
         }
 
-        // 检测章节边界
-        let mut hit_boundary = false;
-        for bp in boundary_patterns() {
-            if bp.is_match(line) {
-                // 保存当前记录
-                if let Some(record) = build_text_record(&current_record_lines, config) {
-                    records.push(record);
+        // 检测章节边界 —— 仅在已进入考核区域后（已发现记录或有待处理行）才停止
+        if !records.is_empty() || !current_record_lines.is_empty() {
+            let mut hit_boundary = false;
+            for bp in boundary_patterns() {
+                if bp.is_match(line) {
+                    // 保存当前记录
+                    if let Some(record) = build_text_record(&current_record_lines, config) {
+                        records.push(record);
+                    }
+                    current_record_lines.clear();
+                    stopped = true;
+                    hit_boundary = true;
+                    break;
                 }
-                current_record_lines.clear();
-                stopped = true;
-                hit_boundary = true;
+            }
+            if hit_boundary {
                 break;
             }
-        }
-        if hit_boundary {
-            if stopped {
-                break;
-            }
-            continue;
         }
 
         // 检查是否为考核记录行开头

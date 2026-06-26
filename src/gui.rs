@@ -3,18 +3,17 @@
 //! 提供图形化用户界面 (egui/eframe)。
 //! 支持: 文件选择、PDF 处理、实时日志显示。
 
-use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 
 use eframe::egui;
-use log::{info, warn};
+use log::warn;
 
-use crate::config::{load_rules, load_excel_style};
-use crate::parser::parse_pdf;
 use crate::classifier::classify_records;
-use crate::validator::{validate_amounts, generate_validation_summary};
+use crate::config::{load_rules, load_excel_style};
 use crate::excel_writer::generate_excel;
+use crate::parser::parse_pdf;
+use crate::validator::{generate_validation_summary, validate_amounts};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -397,16 +396,64 @@ fn process_in_thread(
 pub fn launch_gui() {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
+            .with_title("兴达炼铁保产事业部 结算单明细工具")
             .with_inner_size([680.0, 620.0])
             .with_min_inner_size([600.0, 500.0]),
         ..Default::default()
     };
 
     if let Err(e) = eframe::run_native(
-        "兴达炼铁保产事业部 结算单明细工具",
+        "XingDa JieSuan",
         options,
-        Box::new(|_cc| Ok(Box::new(XingDaApp::default()))),
+        Box::new(|cc| {
+            // 加载中文字体以解决 GUI 乱码
+            setup_chinese_fonts(&cc.egui_ctx);
+            Ok(Box::new(XingDaApp::default()))
+        }),
     ) {
         eprintln!("GUI 启动失败: {}", e);
     }
+}
+
+/// 从系统字体目录加载中文字体并注册到 egui
+fn setup_chinese_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+
+    // Windows 系统中文字体路径（按优先级尝试）
+    let font_paths = [
+        "C:\\Windows\\Fonts\\msyh.ttc",   // 微软雅黑
+        "C:\\Windows\\Fonts\\msyh.ttf",
+        "C:\\Windows\\Fonts\\simsun.ttc",  // 宋体
+        "C:\\Windows\\Fonts\\simhei.ttf",  // 黑体
+        "C:\\Windows\\Fonts\\simfang.ttf", // 仿宋
+    ];
+
+    let font_name = "chinese_font";
+    for path in &font_paths {
+        if let Ok(bytes) = std::fs::read(path) {
+            fonts.font_data.insert(
+                font_name.to_owned(),
+                std::sync::Arc::new(egui::FontData::from_owned(bytes.to_vec())),
+            );
+
+            // 将中文字体插入到 Proportional 和 Monospace 字体族的最前面
+            fonts
+                .families
+                .entry(egui::FontFamily::Proportional)
+                .or_default()
+                .insert(0, font_name.to_owned());
+
+            fonts
+                .families
+                .entry(egui::FontFamily::Monospace)
+                .or_default()
+                .insert(0, font_name.to_owned());
+
+            ctx.set_fonts(fonts);
+            return;
+        }
+    }
+
+    // 所有系统路径都失败时，仍用默认字体（不阻止启动）
+    ctx.set_fonts(fonts);
 }
