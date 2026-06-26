@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, ValueHint};
 use log::{info, error, LevelFilter};
 
-use crate::config::{load_rules, load_excel_style};
+use crate::config::{load_rules, load_excel_style, ParserConfig};
 use crate::parser::parse_pdf;
 use crate::classifier::classify_records;
 use crate::validator::{validate_amounts, generate_validation_summary};
@@ -65,6 +65,18 @@ pub struct Cli {
     /// 启用 OCR 模式（PDF 无文本层时自动调用 Tesseract + Ghostscript）
     #[arg(long = "ocr", default_value_t = false)]
     pub ocr: bool,
+
+    /// OCR DPI（默认 300）
+    #[arg(long = "ocr-dpi", default_value = "300")]
+    pub ocr_dpi: u32,
+
+    /// OCR 语言（默认 chi_sim）
+    #[arg(long = "ocr-lang", default_value = "chi_sim")]
+    pub ocr_lang: String,
+
+    /// Tesseract PSM 模式 3-13（默认 6）
+    #[arg(long = "ocr-psm", default_value = "6")]
+    pub ocr_psm: u8,
 }
 
 /// 设置日志系统
@@ -93,6 +105,7 @@ pub fn process_single(
     include_summary: bool,
     output_name: Option<&str>,
     enable_ocr: bool,
+    parser_config: &ParserConfig,
 ) -> Result<String> {
     let pdf_p = Path::new(pdf_path);
     if !pdf_p.exists() {
@@ -109,7 +122,7 @@ pub fn process_single(
         .map_err(|e| XingDaError::Parse(format!("无法创建输出目录: {}", e)))?;
 
     // --- 1. 解析 PDF ---
-    let mut data = parse_pdf(pdf_path, enable_ocr)?;
+    let mut data = parse_pdf(pdf_path, enable_ocr, parser_config)?;
 
     // 导出原始文本（调试用）
     if dump_text {
@@ -186,6 +199,7 @@ pub fn batch_process(
     include_summary: bool,
     output_name: Option<&str>,
     enable_ocr: bool,
+    parser_config: &ParserConfig,
 ) -> Result<Vec<String>> {
     let mut results = Vec::new();
     let mut errors = Vec::new();
@@ -229,6 +243,7 @@ pub fn batch_process(
             include_summary,
             batch_name.as_deref(),
             enable_ocr,
+            parser_config,
         ) {
             Ok(result) => {
                 if result.is_empty() {
@@ -274,6 +289,13 @@ pub fn run_cli() -> Result<()> {
 
     let include_summary = !cli.no_summary;
 
+    let parser_config = ParserConfig {
+        ocr_dpi: cli.ocr_dpi,
+        ocr_lang: cli.ocr_lang.clone(),
+        tesseract_psm: cli.ocr_psm,
+        ..Default::default()
+    };
+
     if let Some(ref dir) = cli.directory {
         batch_process(
             dir,
@@ -284,6 +306,7 @@ pub fn run_cli() -> Result<()> {
             include_summary,
             cli.name.as_deref(),
             cli.ocr,
+            &parser_config,
         )?;
     } else if let Some(ref pdf) = cli.pdf {
         let output = process_single(
@@ -295,6 +318,7 @@ pub fn run_cli() -> Result<()> {
             include_summary,
             cli.name.as_deref(),
             cli.ocr,
+            &parser_config,
         )?;
         if !output.is_empty() {
             info!("\n输出文件: {}", output);

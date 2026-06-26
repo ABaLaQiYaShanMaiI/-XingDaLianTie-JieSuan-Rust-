@@ -85,7 +85,8 @@ fn boundary_patterns() -> &'static [Regex] {
 /// 解析 PDF 结算单，返回 SettlementData 对象
 ///
 /// `enable_ocr`: 当 PDF 无文本层时，是否启用 Tesseract+Ghostscript OCR
-pub fn parse_pdf(pdf_path: &str, enable_ocr: bool) -> Result<SettlementData> {
+/// `parser_config`: 解析器/Parser配置（OCR DPI、语言等）
+pub fn parse_pdf(pdf_path: &str, enable_ocr: bool, parser_config: &ParserConfig) -> Result<SettlementData> {
     info!("正在读取 PDF: {}", pdf_path);
 
     let path = Path::new(pdf_path);
@@ -97,7 +98,7 @@ pub fn parse_pdf(pdf_path: &str, enable_ocr: bool) -> Result<SettlementData> {
     data.pdf_path = Some(pdf_path.to_string());
 
     // --- 提取 PDF 文本 ---
-    let full_text = extract_pdf_text(pdf_path, enable_ocr)?;
+    let full_text = extract_pdf_text(pdf_path, enable_ocr, parser_config)?;
 
     if full_text.trim().is_empty() {
         return Err(XingDaError::Parse(format!("PDF 无文本内容: {}", pdf_path)));
@@ -113,8 +114,7 @@ pub fn parse_pdf(pdf_path: &str, enable_ocr: bool) -> Result<SettlementData> {
     extract_fee_info(&mut data, &full_text);
 
     // --- 文本行提取考核记录 ---
-    let config = ParserConfig::default();
-    let records = extract_from_text(&full_text, &config);
+    let records = extract_from_text(&full_text, parser_config);
 
     info!("文本通道提取 {} 条记录", records.len());
 
@@ -124,7 +124,7 @@ pub fn parse_pdf(pdf_path: &str, enable_ocr: bool) -> Result<SettlementData> {
 }
 
 /// 使用 pdf-extract 提取 PDF 文本，无文本层时可选 OCR 回退
-fn extract_pdf_text(pdf_path: &str, enable_ocr: bool) -> Result<String> {
+fn extract_pdf_text(pdf_path: &str, enable_ocr: bool, parser_config: &ParserConfig) -> Result<String> {
     let bytes = fs::read(pdf_path)
         .map_err(|e| XingDaError::Parse(format!("无法读取 PDF 文件: {}", e)))?;
 
@@ -149,8 +149,7 @@ fn extract_pdf_text(pdf_path: &str, enable_ocr: bool) -> Result<String> {
                 // pdf-extract 空 + lopdf 空 → 无文本层
                 if enable_ocr {
                     info!("PDF 无文本层，启用 OCR 通道（需 Ghostscript + Tesseract）");
-                    let config = ParserConfig::default();
-                    let ocr_result = crate::ocr::perform_ocr(pdf_path, &config)?;
+                    let ocr_result = crate::ocr::perform_ocr(pdf_path, parser_config)?;
                     info!(
                         "OCR 完成: {} 页，共 {} 字符",
                         ocr_result.page_count,
@@ -186,8 +185,7 @@ fn extract_pdf_text(pdf_path: &str, enable_ocr: bool) -> Result<String> {
             if all_text.trim().is_empty() {
                 if enable_ocr {
                     info!("pdf-extract 和 lopdf 均无法提取文本，启用 OCR 通道");
-                    let config = ParserConfig::default();
-                    let ocr_result = crate::ocr::perform_ocr(pdf_path, &config)?;
+                    let ocr_result = crate::ocr::perform_ocr(pdf_path, parser_config)?;
                     info!(
                         "OCR 完成: {} 页，共 {} 字符",
                         ocr_result.page_count,

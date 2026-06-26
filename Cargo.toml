@@ -39,6 +39,12 @@ anyhow = "1"
 # --- RAII 守卫（用于 OCR 临时文件清理）---
 scopeguard = "1"
 
+# --- 并行计算（多页面 OCR）---
+rayon = "1"
+
+# --- 进度条 ---
+indicatif = "0.17"
+
 # --- 文件/路径 ---
 dirs = "5"
 

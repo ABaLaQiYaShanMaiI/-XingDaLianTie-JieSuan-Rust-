@@ -88,6 +88,20 @@ pub struct ParserConfig {
     pub reward_scan_lines: usize,
     pub ocr_dpi: u32,
     pub reward_filter_threshold: f64,
+    /// OCR 引擎选择（默认 Tesseract）
+    pub ocr_engine: OcrEngine,
+    /// OCR 语言包（默认 chi_sim）
+    pub ocr_lang: String,
+    /// Tesseract PSM 模式 (3-13，默认 6)
+    pub tesseract_psm: u8,
+}
+
+/// OCR 引擎类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OcrEngine {
+    Tesseract,
+    // EasyOCR,   // 未来扩展
+    // PaddleOCR, // 未来扩展
 }
 
 impl Default for ParserConfig {
@@ -98,6 +112,9 @@ impl Default for ParserConfig {
             reward_scan_lines: 5,
             ocr_dpi: 300,
             reward_filter_threshold: 10.0,
+            ocr_engine: OcrEngine::Tesseract,
+            ocr_lang: "chi_sim".to_string(),
+            tesseract_psm: 6,
         }
     }
 }

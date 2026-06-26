@@ -10,7 +10,7 @@ use eframe::egui;
 use log::{info, warn};
 
 use crate::classifier::classify_records;
-use crate::config::{load_rules, load_excel_style};
+use crate::config::{load_rules, load_excel_style, ParserConfig};
 use crate::excel_writer::generate_excel;
 use crate::parser::parse_pdf;
 use crate::validator::{generate_validation_summary, validate_amounts};
@@ -339,7 +339,9 @@ fn process_in_thread(
 
     send_log(LogMessage::Info("正在解析 PDF...".to_string()));
 
-    let mut data = parse_pdf(pdf_path, enable_ocr).map_err(|e| format!("PDF解析失败: {}", e))?;
+    let parser_config = ParserConfig::default();
+    let mut data = parse_pdf(pdf_path, enable_ocr, &parser_config)
+        .map_err(|e| format!("PDF解析失败: {}", e))?;
 
     send_log(LogMessage::Info(format!(
         "提取 {} 条考核记录",

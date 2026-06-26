@@ -8,11 +8,63 @@
 ## 功能
 
 - 📄 **PDF 解析**: 支持 pdf-extract（主） + lopdf（回退），兼容有/无文本层的 PDF
+- 🔍 **OCR 支持**: 扫描件 PDF 可通过 Tesseract + Ghostscript 自动 OCR 提取文字（多页并行 + 进度条）
 - 🏷️ **配置驱动分类**: 通过 YAML 文件自定义考核记录分类规则
 - 📊 **Excel 生成**: 自动生成包含汇总信息、区域概览、明细数据的格式化 Excel
 - 🔍 **金额闭环校验**: 自动比对 PDF 声明合计与程序提取合计，发现偏差
 - 🖥️ **GUI 模式**: 无参数启动时自动进入 GUI 界面
 - 📝 **文本调试**: `--dump-text` 导出 PDF 原始文本供排查
+
+## OCR 功能（扫描件 / 图片型 PDF 支持）
+
+当 PDF 无文本层时（扫描件、图片型 PDF），程序可通过外部工具链自动识别文字。
+
+### 安装外部工具
+
+#### Windows
+
+1. **Ghostscript**  
+   下载: https://ghostscript.com/releases/gsdnld.html  
+   选择 `gs100xw64.exe`（64 位）或 `gs100xw32.exe`（32 位）  
+   默认安装路径: `C:\Program Files\gs\gs10.x.x\bin\gswin64c.exe`
+
+2. **Tesseract-OCR**  
+   下载: https://github.com/UB-Mannheim/tesseract/wiki  
+   **重要**: 安装时务必勾选 "Chinese (Simplified)" 语言包（chi_sim）  
+   默认安装路径: `C:\Program Files\Tesseract-OCR\tesseract.exe`
+
+#### Linux
+
+```bash
+sudo apt install ghostscript tesseract-ocr tesseract-ocr-chi-sim
+```
+
+### 使用方式
+
+```bash
+# 基本用法
+xingda-jiesuan 扫描件.pdf --ocr
+
+# 自定义参数
+xingda-jiesuan 扫描件.pdf --ocr --ocr-dpi 600 --ocr-lang chi_sim+eng --ocr-psm 3
+
+# 调试模式（查看 OCR 进度）
+xingda-jiesuan 扫描件.pdf --ocr --log-level DEBUG
+```
+
+### OCR 参数说明
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--ocr` | 启用 OCR 通道 | 关闭 |
+| `--ocr-dpi <DPI>` | 渲染分辨率（越高越清晰，但更慢） | 300 |
+| `--ocr-lang <LANG>` | Tesseract 语言包（如 `chi_sim+eng`） | chi_sim |
+| `--ocr-psm <PSM>` | Tesseract PSM 模式（3=全自动, 6=统一文本块） | 6 |
+
+### 多页面并行处理
+
+程序使用 [rayon](https://crates.io/crates/rayon) 并行处理多个页面，大幅提升 OCR 性能。  
+多页 PDF 会显示实时进度条（仅在终端环境下）。
 
 ## 使用示例
 
@@ -38,6 +90,12 @@ xingda-jiesuan 结算单.pdf --validate-only
 # 导出 PDF 原始文本用于调试
 xingda-jiesuan 结算单.pdf --dump-text
 
+# 扫描件 OCR
+xingda-jiesuan 扫描件.pdf --ocr
+
+# 扫描件 OCR + 自定义 DPI 和语言
+xingda-jiesuan 扫描件.pdf --ocr --ocr-dpi 600 --ocr-lang chi_sim+eng
+
 # 调试模式
 xingda-jiesuan 结算单.pdf --log-level DEBUG
 ```
@@ -54,6 +112,10 @@ xingda-jiesuan 结算单.pdf --log-level DEBUG
 | `--dump-text` | 导出 PDF 提取的原始文本 |
 | `--no-summary` | 不生成汇总信息区域 |
 | `--name <NAME>` | 自定义输出文件名（批量模式为前缀） |
+| `--ocr` | 启用 OCR 通道（PDF 无文本层时） |
+| `--ocr-dpi <DPI>` | OCR 渲染 DPI（默认 300） |
+| `--ocr-lang <LANG>` | OCR 语言包（默认 chi_sim） |
+| `--ocr-psm <PSM>` | Tesseract PSM 模式 3-13（默认 6） |
 | `--log-level <LEVEL>` | 日志级别：DEBUG/INFO/WARN/ERROR |
 
 ## 构建
@@ -114,6 +176,7 @@ area_order:
 │   ├── classifier.rs    # 配置驱动分类
 │   ├── excel_writer.rs  # Excel 生成
 │   ├── validator.rs     # 金额闭环校验
+│   ├── ocr.rs           # OCR 引擎（Tesseract + Ghostscript）
 │   ├── config.rs        # 配置加载
 │   ├── models.rs        # 数据模型
 │   ├── error.rs         # 错误处理
@@ -124,13 +187,23 @@ area_order:
 └── build_release.bat    # 发布构建脚本
 ```
 
-## 依赖
+## 外部依赖 (OCR)
+
+OCR 功能需要安装以下外部工具：
+
+- **Ghostscript**: https://ghostscript.com/releases/gsdnld.html
+- **Tesseract-OCR**: https://github.com/UB-Mannheim/tesseract/wiki
+  - 安装时需勾选 `chi_sim` 中文简体语言包
+
+## Rust 依赖
 
 - [clap](https://crates.io/crates/clap) - 命令行参数解析
 - [pdf-extract](https://crates.io/crates/pdf-extract) - PDF 文本提取
 - [lopdf](https://crates.io/crates/lopdf) - PDF 回退解析
 - [rust_xlsxwriter](https://crates.io/crates/rust_xlsxwriter) - Excel 文件生成
 - [regex](https://crates.io/crates/regex) - 正则匹配
+- [rayon](https://crates.io/crates/rayon) - 并行计算（多页面 OCR）
+- [indicatif](https://crates.io/crates/indicatif) - OCR 进度条
 - [eframe/egui](https://crates.io/crates/egui) - GUI 框架
 - [env_logger](https://crates.io/crates/env_logger) - 日志系统
 - [serde_yaml](https://crates.io/crates/serde_yaml) - YAML 配置解析
@@ -138,5 +211,6 @@ area_order:
 ## 注意事项
 
 - **PDF 解析**: pdf-extract 对复杂排版 PDF（带水印、多层叠加等）支持有限；PDF 无文本层时自动回退至 lopdf
+- **OCR**: 扫描件/图片型 PDF 需使用 `--ocr` 标志并安装 Ghostscript 和 Tesseract；多页 PDF 会自动并行处理
 - **分类精度**: 依甲方考核条款标准，特殊格式或新增条款可能需调整 `classify_rules.yaml`
 - **金额校验**: 最大允许偏差 ±5%，超出则标记失败并在 Excel 中红字警告
