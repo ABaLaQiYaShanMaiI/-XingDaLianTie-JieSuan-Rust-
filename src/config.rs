@@ -35,6 +35,8 @@ pub struct AreaRule {
     // 预编译的正则（运行时填充）
     pub compiled_equipment_re: Vec<Regex>,
     pub compiled_pattern_re: Vec<Regex>,
+    /// 是否包含任何匹配条件（加载时预计算，避免 classify_one 每次重复判断）
+    pub has_match_rules: bool,
 }
 
 impl AreaRule {
@@ -343,6 +345,10 @@ fn build_rules_from_raw(raw: RawRules) -> Result<ClassifyRules> {
                     equipment_prefixes: None,
                     description_patterns: None,
                 });
+                let has_match = !match_rules.item_numbers.as_ref().map_or(true, |v| v.is_empty())
+                    || !match_rules.keywords.as_ref().map_or(true, |v| v.is_empty())
+                    || !match_rules.equipment_prefixes.as_ref().map_or(true, |v| v.is_empty())
+                    || !match_rules.description_patterns.as_ref().map_or(true, |v| v.is_empty());
                 AreaRule {
                     name: ra.name,
                     priority: ra.priority.unwrap_or(99),
@@ -352,6 +358,7 @@ fn build_rules_from_raw(raw: RawRules) -> Result<ClassifyRules> {
                     description_patterns: match_rules.description_patterns.unwrap_or_default(),
                     compiled_equipment_re: vec![],
                     compiled_pattern_re: vec![],
+                    has_match_rules: has_match,
                 }
             })
             .collect(),
@@ -365,6 +372,7 @@ fn build_rules_from_raw(raw: RawRules) -> Result<ClassifyRules> {
                 description_patterns: vec![],
                 compiled_equipment_re: vec![],
                 compiled_pattern_re: vec![],
+                has_match_rules: false,
             }]
         }
     };
@@ -383,6 +391,7 @@ fn build_rules_from_raw(raw: RawRules) -> Result<ClassifyRules> {
             description_patterns: vec![],
             compiled_equipment_re: vec![],
             compiled_pattern_re: vec![],
+            has_match_rules: false,
         });
     }
 

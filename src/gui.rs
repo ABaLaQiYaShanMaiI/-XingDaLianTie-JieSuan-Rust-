@@ -7,11 +7,11 @@ use std::thread;
 use eframe::egui;
 use log::{info, warn};
 
-use crate::classifier::classify_records;
-use crate::config::{load_rules, load_excel_style, ParserConfig, StylePreset};
+use crate::cli::process_pdf_core;
+use crate::config::StylePreset;
 use crate::excel_writer::generate_excel;
-use crate::parser::parse_pdf;
-use crate::validator::{generate_validation_summary, validate_amounts};
+use crate::config::ParserConfig;
+use crate::validator::generate_validation_summary;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -675,7 +675,7 @@ fn detect_tesseract() -> ToolStatus {
 // 后台处理
 // ============================================================
 
-/// 在后台线程中执行处理
+/// 在后台线程中执行处理（复用 CLI 核心流程）
 fn process_in_thread(
     pdf_path: &str,
     output_dir: &str,
@@ -690,19 +690,21 @@ fn process_in_thread(
     log_file_path: Option<&str>,
     send_log: &dyn Fn(LogMessage),
 ) -> Result<String, String> {
-    let rules = load_rules(rules_path).map_err(|e| format!("加载配置失败: {}", e))?;
-    let mut excel_style = load_excel_style();
-    if let Some(preset) = style_preset {
-        excel_style = excel_style.apply_preset(preset);
-        send_log(LogMessage::Info(format!("已应用样式: {:?}", preset)));
-    }
-
     send_log(LogMessage::Info("正在解析 PDF...".to_string()));
 
     // 使用默认 ParserConfig（GUI 暂不支持自定义 OCR DPI / 语言 / PSM 参数）
     let parser_config = ParserConfig::default();
-    let mut data = parse_pdf(pdf_path, enable_ocr, no_merge, &parser_config)
-        .map_err(|e| format!("PDF解析失败: {}", e))?;
+
+    // --- 核心处理：解析 + 分类 + 校验（复用 CLI 共享函数） ---
+    let (mut data, rules, excel_style, is_valid) = process_pdf_core(
+        pdf_path,
+        rules_path,
+        enable_ocr,
+        no_merge,
+        &parser_config,
+        style_preset,
+    )
+    .map_err(|e| format!("处理失败: {}", e))?;
 
     // 导出原始文本
     if dump_text {
@@ -728,11 +730,6 @@ fn process_in_thread(
         data.all_records.len()
     )));
 
-    // 分类
-    classify_records(&mut data, &rules);
-
-    // 校验
-    let is_valid = validate_amounts(&mut data);
     let summary = generate_validation_summary(&data);
 
     for line in summary.lines() {

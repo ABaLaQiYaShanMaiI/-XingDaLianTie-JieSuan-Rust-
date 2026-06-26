@@ -149,7 +149,7 @@ pub fn generate_excel(
     }
 
     // --- 3. 校验失败警告行 ---
-    if !data.amount_match && current_row > 0 {
+    if !data.amount_match {
         current_row += 1;
         let warning_text = format!(
             "⚠ 金额校验失败：PDF 声明合计 ¥{:.2}，程序提取合计 ¥{:.2}，偏差 {:.2}%",

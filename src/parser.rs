@@ -348,11 +348,11 @@ fn parse_amount(m: Option<regex::Match<'_>>) -> Option<f64> {
 /// 提取嘉奖金额，按优先级尝试多种匹配策略
 fn extract_reward_amount(full_text: &str, config: &ParserConfig) -> f64 {
     let num_re_str = r"(\d+(?:,\d+)*(?:\.\d+)?)";
-    let opt_space = r"\s*\n?\s*";
+    let opt_space = r"\s*\n*\s*";
     let scan_lines = config.reward_scan_lines;
     let min_threshold = config.reward_filter_threshold;
 
-    // 策略1: 嘉奖金额 \n A \n 小计 \n B
+    // 策略1: 嘉奖金额 \n A \n 小计 \n B（三行跨行模式）
     let re1_str = format!(r"嘉奖金额{}{}{}小计{}{}", opt_space, num_re_str, opt_space, opt_space, num_re_str);
     if let Ok(re1) = Regex::new(&re1_str) {
         if let Some(caps) = re1.captures(full_text) {
@@ -365,34 +365,32 @@ fn extract_reward_amount(full_text: &str, config: &ParserConfig) -> f64 {
         }
     }
 
-    // 策略2: 嘉奖金额 后直接跟金额
-    let re2_str = format!(r"嘉奖金额[：:]*{}{}", opt_space, num_re_str);
-    if let Ok(re2) = Regex::new(&re2_str) {
-        if let Some(caps) = re2.captures(full_text) {
-            if let Some(m) = caps.get(1) {
-                if let Ok(val) = m.as_str().replace(",", "").parse::<f64>() {
-                    debug!("  嘉奖金额（策略2: 直接匹配）: {:.2}", val);
-                    return val;
-                }
-            }
-        }
-    }
-
-    // 策略3: 找到"嘉奖金额"行，在后续 scan_lines 行内找金额
+    // 策略2: 找到"嘉奖金额"行，优先取同行末尾数字，再向下扫描（行扫描策略）
+    // 注意：同行上仅取"嘉奖金额"之后、"考核金额合计/小计"之前的最后一个 > threshold 金额
     let lines: Vec<&str> = full_text.split('\n').collect();
     let num_re = Regex::new(num_re_str).unwrap();
+    let boundary_end = Regex::new(r"考核金额合计|合同考核|小计").unwrap();
     for (idx, line) in lines.iter().enumerate() {
         if line.contains("嘉奖金额") {
-            // 从本行提取
-            let all_nums: Vec<f64> = num_re
-                .captures_iter(line)
-                .filter_map(|caps| caps.get(1))
-                .filter_map(|m| m.as_str().replace(",", "").parse::<f64>().ok())
-                .collect();
-            if let Some(&val) = all_nums.last() {
-                if val > min_threshold {
-                    debug!("  嘉奖金额（策略3a: 同行末位）: {:.2}", val);
-                    return val;
+            // 从本行提取：仅取嘉奖金额位置之后、边界词之前的数字
+            if let Some(start_pos) = line.find("嘉奖金额") {
+                let after_jj = &line[start_pos..];
+                // 截断到边界词
+                let search_text = if let Some(boundary_match) = boundary_end.find(after_jj) {
+                    &after_jj[..boundary_match.start()]
+                } else {
+                    after_jj
+                };
+                let all_nums: Vec<f64> = num_re
+                    .captures_iter(search_text)
+                    .filter_map(|caps| caps.get(1))
+                    .filter_map(|m| m.as_str().replace(",", "").parse::<f64>().ok())
+                    .collect();
+                if let Some(&val) = all_nums.last() {
+                    if val > min_threshold {
+                        debug!("  嘉奖金额（策略2a: 同行末位）: {:.2}", val);
+                        return val;
+                    }
                 }
             }
 
@@ -405,13 +403,26 @@ fn extract_reward_amount(full_text: &str, config: &ParserConfig) -> f64 {
                 if let Some(caps) = num_re.captures(scan_line) {
                     if let Some(m) = caps.get(1) {
                         if let Ok(val) = m.as_str().replace(",", "").parse::<f64>() {
-                            debug!("  嘉奖金额（策略3b: {}行后）: {:.2}", offset, val);
+                            debug!("  嘉奖金额（策略2b: {}行后）: {:.2}", offset, val);
                             return val;
                         }
                     }
                 }
             }
             break;
+        }
+    }
+
+    // 策略3: 嘉奖金额 后直接跟金额（简单正则，回退用）
+    let re2_str = format!(r"嘉奖金额[：:]*{}{}", opt_space, num_re_str);
+    if let Ok(re2) = Regex::new(&re2_str) {
+        if let Some(caps) = re2.captures(full_text) {
+            if let Some(m) = caps.get(1) {
+                if let Ok(val) = m.as_str().replace(",", "").parse::<f64>() {
+                    debug!("  嘉奖金额（策略3: 直接匹配）: {:.2}", val);
+                    return val;
+                }
+            }
         }
     }
 
@@ -511,6 +522,12 @@ fn extract_from_text(full_text: &str, no_merge: bool, config: &ParserConfig) -> 
             let mut hit_boundary = false;
             for bp in boundary_patterns() {
                 if bp.is_match(line) {
+                    debug!(
+                        "  边界检测停止解析: 行 '{}' 匹配模式 '{}'，已保存 {} 条记录",
+                        line,
+                        bp.as_str(),
+                        records.len()
+                    );
                     // 保存当前记录
                     if let Some(record) = build_text_record(&current_record_lines, config) {
                         records.push(record);
@@ -590,6 +607,14 @@ fn build_text_record(lines: &[String], config: &ParserConfig) -> Option<Assessme
     let mut clauses: Vec<String> = Vec::new();
     for pattern in clause_patterns() {
         for m in pattern.find_iter(&remainder) {
+            clauses.push(m.as_str().to_string());
+        }
+    }
+
+    // 条款回退：从描述中提取中文数字条款编号（如"二、"、"（三）"等）
+    if clauses.is_empty() {
+        let fallback_clause_re = Regex::new(r"[（(][一二三四五六七八九十]+[）)]").unwrap();
+        for m in fallback_clause_re.find_iter(&remainder) {
             clauses.push(m.as_str().to_string());
         }
     }
@@ -722,10 +747,7 @@ mod tests {
     fn test_reward_strategy1_three_line() {
         let text = "嘉奖金额\n\n5000.00\n\n小计\n\n3000.00";
         let val = extract_reward_amount(text, &default_config());
-        // 策略1 应匹配小计后的金额（第2组 = 3000.00）
-        // 如果三行不满足, 实际可能落入后续策略
-        // 关键是不 panic 且返回值 >= 0
-        assert!(val >= 0.0);
+        assert_eq!(val, 3000.00, "策略1应匹配小计后的金额3000.00");
     }
 
     #[test]

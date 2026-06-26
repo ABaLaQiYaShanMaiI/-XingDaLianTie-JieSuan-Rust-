@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, ValueHint};
 use log::{info, error, LevelFilter};
 
-use crate::config::{load_rules, load_excel_style, ParserConfig, StylePreset};
+use crate::config::{load_rules, load_excel_style, ParserConfig, StylePreset, ClassifyRules, ExcelStyle};
+use crate::models::SettlementData;
 use crate::parser::parse_pdf;
 use crate::classifier::classify_records;
 use crate::validator::{validate_amounts, generate_validation_summary};
@@ -91,6 +92,14 @@ pub struct Cli {
     /// 禁用多行合并（调试用）
     #[arg(long = "no-merge", default_value_t = false)]
     pub no_merge: bool,
+
+    /// 嘉奖金额扫描行数（默认 5）
+    #[arg(long = "reward-scan-lines", default_value = "5")]
+    pub reward_scan_lines: usize,
+
+    /// 嘉奖金额过滤阈值（元，默认 10.0）
+    #[arg(long = "reward-filter-threshold", default_value = "10.0")]
+    pub reward_filter_threshold: f64,
 }
 
 /// 设置日志系统（支持控制台 + 可选日志文件）
@@ -177,6 +186,33 @@ impl std::io::Write for LogFileWriter {
     }
 }
 
+/// 核心处理流程：解析 + 分类 + 校验，返回 SettlementData 和配置引用，
+/// 供 CLI 和 GUI 复用。
+///
+/// 返回 `(SettlementData, ClassifyRules, ExcelStyle, bool)`。
+/// `bool` 为 `is_valid` 校验结果。
+pub fn process_pdf_core(
+    pdf_path: &str,
+    rules_path: Option<&str>,
+    enable_ocr: bool,
+    no_merge: bool,
+    parser_config: &ParserConfig,
+    style: Option<StylePreset>,
+) -> Result<(SettlementData, ClassifyRules, ExcelStyle, bool)> {
+    let rules = load_rules(rules_path)?;
+    let mut excel_style = load_excel_style();
+    if let Some(style_preset) = style {
+        excel_style = excel_style.apply_preset(style_preset);
+    }
+
+    let mut data = parse_pdf(pdf_path, enable_ocr, no_merge, parser_config)?;
+
+    classify_records(&mut data, &rules);
+    let is_valid = validate_amounts(&mut data);
+
+    Ok((data, rules, excel_style, is_valid))
+}
+
 /// 处理单个 PDF 文件
 ///
 /// `output_dir`: 如果为 `None`，默认输出到当前工作目录（"."）。
@@ -199,20 +235,24 @@ pub fn process_single(
         return Err(XingDaError::Parse(format!("PDF 文件不存在: {}", pdf_path)));
     }
 
-    let rules = load_rules(rules_path)?;
-    let mut excel_style = load_excel_style();
-    if let Some(style_preset) = style {
-        excel_style = excel_style.apply_preset(style_preset);
-    }
-
     let out_dir = PathBuf::from(output_dir.unwrap_or("."));
     std::fs::create_dir_all(&out_dir)
         .map_err(|e| XingDaError::Parse(format!("无法创建输出目录: {}", e)))?;
 
-    // --- 1. 解析 PDF ---
-    let mut data = parse_pdf(pdf_path, enable_ocr, no_merge, parser_config)?;
+    // --- 核心处理：解析 + 分类 + 校验 ---
+    let (mut data, rules, excel_style, is_valid) = process_pdf_core(
+        pdf_path,
+        rules_path,
+        enable_ocr,
+        no_merge,
+        parser_config,
+        style,
+    )?;
 
-    // 导出原始文本
+    let summary = generate_validation_summary(&data);
+    info!("\n{}", summary);
+
+    // 导出原始文本（CLI 特有：指定输出目录）
     if dump_text {
         let txt_path = pdf_p.with_extension("txt");
         let txt_filename = txt_path
@@ -230,14 +270,6 @@ pub fn process_single(
         info!("原始文本已导出: {} ({} 字符)", txt_out.display(), data.raw_text.len());
     }
 
-    // --- 2. 分类 ---
-    classify_records(&mut data, &rules);
-
-    // --- 3. 校验 ---
-    let is_valid = validate_amounts(&mut data);
-    let summary = generate_validation_summary(&data);
-    info!("\n{}", summary);
-
     if validate_only {
         if is_valid {
             info!("--validate-only 模式：解析和校验完成，未生成 Excel");
@@ -247,7 +279,7 @@ pub fn process_single(
         return Ok(String::new());
     }
 
-    // --- 4. 生成 Excel ---
+    // --- 生成 Excel ---
     let excel_name = if let Some(name) = output_name {
         let mut n = name.to_string();
         if !n.ends_with(".xlsx") {
@@ -427,6 +459,8 @@ pub fn run_cli() -> Result<()> {
         ocr_dpi: cli.ocr_dpi,
         ocr_lang: cli.ocr_lang.clone(),
         tesseract_psm: cli.ocr_psm,
+        reward_scan_lines: cli.reward_scan_lines,
+        reward_filter_threshold: cli.reward_filter_threshold,
         ..Default::default()
     };
 

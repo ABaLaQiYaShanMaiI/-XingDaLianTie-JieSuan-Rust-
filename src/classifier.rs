@@ -62,14 +62,9 @@ fn classify_one(record: &AssessmentRecord, areas: &[crate::config::AreaRule]) ->
     let desc = &record.description;
 
     for area_cfg in areas {
-        let has_match_rules = !area_cfg.keywords.is_empty()
-            || !area_cfg.item_numbers.is_empty()
-            || !area_cfg.equipment_prefixes.is_empty()
-            || !area_cfg.description_patterns.is_empty();
-
         // 跳过无匹配条件的区域规则（如「未分类」兜底），
         // 最终未命中任何规则时在函数末尾统一归入「未分类」
-        if !has_match_rules {
+        if !area_cfg.has_match_rules {
             continue;
         }
 
@@ -111,7 +106,7 @@ mod tests {
 
     /// 使用 compile_regexes() 构建测试规则，确保与生产代码逻辑一致
     fn test_rules() -> Vec<AreaRule> {
-        let mut areas = vec![
+            let mut areas = vec![
             AreaRule {
                 name: "事业部".into(),
                 priority: 1,
@@ -121,6 +116,7 @@ mod tests {
                 description_patterns: vec!["协力安全管理工作方案.*落实".into(), "合同评价.*排名".into()],
                 compiled_equipment_re: vec![],
                 compiled_pattern_re: vec![],
+                has_match_rules: true,
             },
             AreaRule {
                 name: "供矿作业区".into(),
@@ -131,6 +127,7 @@ mod tests {
                 description_patterns: vec![],
                 compiled_equipment_re: vec![],
                 compiled_pattern_re: vec![],
+                has_match_rules: true,
             },
             AreaRule {
                 name: "煤库作业区".into(),
@@ -141,6 +138,7 @@ mod tests {
                 description_patterns: vec![],
                 compiled_equipment_re: vec![],
                 compiled_pattern_re: vec![],
+                has_match_rules: true,
             },
             AreaRule {
                 name: "原料分厂作业区".into(),
@@ -151,6 +149,7 @@ mod tests {
                 description_patterns: vec![],
                 compiled_equipment_re: vec![],
                 compiled_pattern_re: vec![],
+                has_match_rules: true,
             },
             AreaRule {
                 name: "未分类".into(),
@@ -161,6 +160,7 @@ mod tests {
                 description_patterns: vec![],
                 compiled_equipment_re: vec![],
                 compiled_pattern_re: vec![],
+                has_match_rules: false,
             },
         ];
         for area in &mut areas {

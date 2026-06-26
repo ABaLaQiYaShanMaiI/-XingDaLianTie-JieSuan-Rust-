@@ -75,8 +75,6 @@ pub struct SettlementData {
     pub settlement_amount: f64,
 
     pub all_records: Vec<AssessmentRecord>,
-    /// 被过滤的记录及原因
-    pub filtered_records: Vec<(AssessmentRecord, String)>,
     /// 按区域分组的记录
     pub areas: BTreeMap<String, AreaData>,
 
@@ -107,7 +105,6 @@ impl SettlementData {
             total_reward: 0.0,
             settlement_amount: 0.0,
             all_records: Vec::new(),
-            filtered_records: Vec::new(),
             areas: BTreeMap::new(),
             pdf_stated_total: None,
             amount_match: true,
