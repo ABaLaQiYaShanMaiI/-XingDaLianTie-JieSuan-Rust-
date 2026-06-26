@@ -19,6 +19,7 @@ pub fn generate_excel(
     area_order: &[String],
     style: &ExcelStyle,
     include_summary: bool,
+    summary_only: bool,
 ) -> Result<()> {
     info!("正在生成 Excel: {}", output_path);
 
@@ -80,25 +81,27 @@ pub fn generate_excel(
     }
 
     // --- 2. 区域明细 ---
-    for (idx, area_name) in area_order.iter().enumerate() {
-        if let Some(area_data) = data.areas.get(area_name) {
-            if area_data.records.is_empty() {
-                continue;
-            }
+    if !summary_only {
+        for (idx, area_name) in area_order.iter().enumerate() {
+            if let Some(area_data) = data.areas.get(area_name) {
+                if area_data.records.is_empty() {
+                    continue;
+                }
 
-            if idx > 0 {
-                current_row += 1;
-            }
+                if idx > 0 {
+                    current_row += 1;
+                }
 
-            current_row = write_area_section(
-                &mut worksheet,
-                current_row,
-                area_data,
-                &header_format,
-                &data_format,
-                &amount_format,
-                style,
-            )?;
+                current_row = write_area_section(
+                    &mut worksheet,
+                    current_row,
+                    area_data,
+                    &header_format,
+                    &data_format,
+                    &amount_format,
+                    style,
+                )?;
+            }
         }
     }
 

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, ValueHint};
 use log::{info, error, LevelFilter};
 
-use crate::config::{load_rules, load_excel_style, ParserConfig};
+use crate::config::{load_rules, load_excel_style, ParserConfig, StylePreset};
 use crate::parser::parse_pdf;
 use crate::classifier::classify_records;
 use crate::validator::{validate_amounts, generate_validation_summary};
@@ -77,10 +77,26 @@ pub struct Cli {
     /// Tesseract PSM 模式 3-13（默认 6）
     #[arg(long = "ocr-psm", default_value = "6")]
     pub ocr_psm: u8,
+
+    /// 日志文件输出路径（带轮转，每个文件最大 5MB，保留 3 个备份）
+    #[arg(long = "log-file", value_hint = ValueHint::FilePath)]
+    pub log_file: Option<String>,
+
+    /// Excel 样式预设（compact: 紧凑, wide: 宽松）
+    #[arg(long = "style", value_enum)]
+    pub style: Option<StylePreset>,
+
+    /// 仅生成汇总 sheet，跳过区域明细
+    #[arg(long = "summary-only", default_value_t = false)]
+    pub summary_only: bool,
+
+    /// 禁用多行合并（调试用）
+    #[arg(long = "no-merge", default_value_t = false)]
+    pub no_merge: bool,
 }
 
-/// 设置日志系统
-pub fn setup_logging(level: &str) {
+/// 设置日志系统（支持控制台 + 可选日志文件）
+pub fn setup_logging(level: &str, log_file: Option<&str>) {
     let level = match level.to_uppercase().as_str() {
         "DEBUG" => LevelFilter::Debug,
         "INFO" => LevelFilter::Info,
@@ -89,10 +105,90 @@ pub fn setup_logging(level: &str) {
         _ => LevelFilter::Info,
     };
 
-    env_logger::Builder::new()
-        .filter_level(level)
-        .format_timestamp_secs()
-        .init();
+    let mut builder = env_logger::Builder::new();
+    builder.filter_level(level).format_timestamp_secs();
+
+    // 如果指定了日志文件，追加文件输出
+    if let Some(path) = log_file {
+        let ts = chrono_timestamp();
+        let log_path = format!("{}_{}.log", path.trim_end_matches(".log"), ts);
+
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+        {
+            Ok(file) => {
+                let file_writer =
+                    std::sync::Mutex::new(std::io::BufWriter::new(file));
+                builder.target(env_logger::Target::Pipe(Box::new(LogFileWriter {
+                    file: file_writer,
+                    path: log_path.clone(),
+                    max_size: 5 * 1024 * 1024, // 5MB
+                })));
+                eprintln!("日志文件: {}", log_path);
+            }
+            Err(e) => {
+                eprintln!("无法创建日志文件 {}: {}", log_path, e);
+            }
+        }
+    }
+
+    builder.init();
+}
+
+/// 生成日志文件时间戳字符串
+fn chrono_timestamp() -> String {
+    use std::time::SystemTime;
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = now.as_secs();
+    // 简单格式: 20260626_200000
+    // 使用 time crate 来做格式化（用 UTC）
+    if let Ok(dt) = time::OffsetDateTime::from_unix_timestamp(secs as i64) {
+        let fmt = dt
+            .format(
+                &time::format_description::well_known::Rfc3339,
+            )
+            .unwrap_or_default();
+        // RFC 3339: "2026-06-26T20:00:00Z" → "20260626_200000"
+        fmt.replace('-', "")
+            .replace(':', "")
+            .replace('T', "_")
+            .replace('Z', "")
+            .chars()
+            .take(15)
+            .collect()
+    } else {
+        format!("{}", secs)
+    }
+}
+
+/// 日志文件写入器（带 5MB 轮转）
+struct LogFileWriter {
+    file: std::sync::Mutex<std::io::BufWriter<std::fs::File>>,
+    path: String,
+    max_size: u64,
+}
+
+impl std::io::Write for LogFileWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let mut f = self.file.lock().unwrap();
+        if let Ok(meta) = f.get_ref().metadata() {
+            if meta.len() > self.max_size {
+                let backup = format!("{}.old", self.path);
+                let _ = std::fs::rename(&self.path, &backup);
+                let new_file = std::fs::File::create(&self.path)?;
+                *f = std::io::BufWriter::new(new_file);
+            }
+        }
+        f.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.file.lock().unwrap().flush()
+    }
 }
 
 /// 处理单个 PDF 文件
@@ -103,31 +199,36 @@ pub fn process_single(
     validate_only: bool,
     dump_text: bool,
     include_summary: bool,
+    summary_only: bool,
     output_name: Option<&str>,
     enable_ocr: bool,
+    no_merge: bool,
     parser_config: &ParserConfig,
+    style: Option<StylePreset>,
 ) -> Result<String> {
     let pdf_p = Path::new(pdf_path);
     if !pdf_p.exists() {
         return Err(XingDaError::Parse(format!("PDF 文件不存在: {}", pdf_path)));
     }
 
-    // 加载配置
     let rules = load_rules(rules_path)?;
-    let excel_style = load_excel_style();
+    let mut excel_style = load_excel_style();
+    if let Some(style_preset) = style {
+        excel_style = excel_style.apply_preset(style_preset);
+    }
 
-    // 创建输出目录（提前，供 dump-text 和 Excel 共用）
     let out_dir = PathBuf::from(output_dir.unwrap_or("."));
     std::fs::create_dir_all(&out_dir)
         .map_err(|e| XingDaError::Parse(format!("无法创建输出目录: {}", e)))?;
 
     // --- 1. 解析 PDF ---
-    let mut data = parse_pdf(pdf_path, enable_ocr, parser_config)?;
+    let mut data = parse_pdf(pdf_path, enable_ocr, no_merge, parser_config)?;
 
-    // 导出原始文本（调试用）
+    // 导出原始文本
     if dump_text {
         let txt_path = pdf_p.with_extension("txt");
-        let txt_filename = txt_path.file_name()
+        let txt_filename = txt_path
+            .file_name()
             .ok_or_else(|| XingDaError::Parse("PDF文件名无法解析".into()))?;
         let txt_out = out_dir.join(txt_filename);
         std::fs::write(&txt_out, &data.raw_text)
@@ -160,12 +261,16 @@ pub fn process_single(
         }
         n
     } else {
-        let stem = pdf_p.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+        let stem = pdf_p
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("output");
         format!("{}明细.xlsx", stem)
     };
 
     let output_path = out_dir.join(&excel_name);
-    let output_path_str = output_path.to_str()
+    let output_path_str = output_path
+        .to_str()
         .ok_or_else(|| XingDaError::ExcelWrite("输出路径包含非法字符".to_string()))?;
 
     generate_excel(
@@ -174,9 +279,9 @@ pub fn process_single(
         &rules.area_order,
         &excel_style,
         include_summary,
+        summary_only,
     )?;
 
-    // 打印汇总
     let records_count = data.all_records.len();
     let total = data.total_assessment;
     let status = if is_valid { "✅ 校验通过" } else { "❌ 校验失败" };
@@ -189,7 +294,6 @@ pub fn process_single(
 }
 
 /// 批量处理目录下的所有 PDF 文件
-/// --name 在批量模式下作为前缀使用，每个文件生成 `name_001.xlsx` `name_002.xlsx` ... 避免覆盖
 pub fn batch_process(
     input_dir: &str,
     output_dir: Option<&str>,
@@ -197,9 +301,12 @@ pub fn batch_process(
     validate_only: bool,
     dump_text: bool,
     include_summary: bool,
+    summary_only: bool,
     output_name: Option<&str>,
     enable_ocr: bool,
+    no_merge: bool,
     parser_config: &ParserConfig,
+    style: Option<StylePreset>,
 ) -> Result<Vec<String>> {
     let mut results = Vec::new();
     let mut errors = Vec::new();
@@ -220,18 +327,25 @@ pub fn batch_process(
     let total = pdf_files.len();
     info!("发现 {} 个 PDF 文件", total);
 
-    // 计算序号宽度（用于零填充）
-    let index_width = if total > 0 { ((total as f64).log10().floor() as usize) + 1 } else { 1 };
+    let index_width = if total > 0 {
+        ((total as f64).log10().floor() as usize) + 1
+    } else {
+        1
+    };
 
     for (i, pdf_file) in pdf_files.iter().enumerate() {
         let pdf_path = pdf_file.to_str().unwrap_or("");
 
-        // 批量模式下，如果指定了 --name，作为前缀加序号
         let batch_name: Option<String> = if let Some(base_name) = output_name {
             let stem = base_name.trim_end_matches(".xlsx");
-            Some(format!("{}_{:0width$}.xlsx", stem, i + 1, width = index_width))
+            Some(format!(
+                "{}_{:0width$}.xlsx",
+                stem,
+                i + 1,
+                width = index_width
+            ))
         } else {
-            None // 使用默认命名（各 PDF 文件名+明细）
+            None
         };
 
         match process_single(
@@ -241,31 +355,57 @@ pub fn batch_process(
             validate_only,
             dump_text,
             include_summary,
+            summary_only,
             batch_name.as_deref(),
             enable_ocr,
+            no_merge,
             parser_config,
+            style,
         ) {
             Ok(result) => {
                 if result.is_empty() {
-                    info!("  ✅ {} 校验完成（未生成文件）",
-                        pdf_file.file_name().unwrap_or_default().to_str().unwrap_or(""));
+                    info!(
+                        "  ✅ {} 校验完成（未生成文件）",
+                        pdf_file
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_str()
+                            .unwrap_or("")
+                    );
                 } else {
-                    let filename = Path::new(&result).file_name().and_then(|s| s.to_str()).map(|s| s.to_string()).unwrap_or_default();
+                    let filename = Path::new(&result)
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_default();
                     results.push(result);
-                    info!("  ✅ {} → {}",
-                        pdf_file.file_name().unwrap_or_default().to_str().unwrap_or(""), filename);
+                    info!(
+                        "  ✅ {} → {}",
+                        pdf_file
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_str()
+                            .unwrap_or(""),
+                        filename
+                    );
                 }
             }
             Err(e) => {
-                let err_msg = format!("  ❌ {}: {}",
-                    pdf_file.file_name().unwrap_or_default().to_str().unwrap_or(""), e);
+                let err_msg = format!(
+                    "  ❌ {}: {}",
+                    pdf_file
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_str()
+                        .unwrap_or(""),
+                    e
+                );
                 errors.push(err_msg.clone());
                 error!("{}", err_msg);
             }
         }
     }
 
-    // 批量汇总
     if !results.is_empty() || !errors.is_empty() {
         info!("\n{}", "═".repeat(50));
         info!("批量处理完成:");
@@ -285,7 +425,7 @@ pub fn batch_process(
 /// CLI 主入口
 pub fn run_cli() -> Result<()> {
     let cli = Cli::parse();
-    setup_logging(&cli.log_level);
+    setup_logging(&cli.log_level, cli.log_file.as_deref());
 
     let include_summary = !cli.no_summary;
 
@@ -304,9 +444,12 @@ pub fn run_cli() -> Result<()> {
             cli.validate_only,
             cli.dump_text,
             include_summary,
+            cli.summary_only,
             cli.name.as_deref(),
             cli.ocr,
+            cli.no_merge,
             &parser_config,
+            cli.style,
         )?;
     } else if let Some(ref pdf) = cli.pdf {
         let output = process_single(
@@ -316,15 +459,17 @@ pub fn run_cli() -> Result<()> {
             cli.validate_only,
             cli.dump_text,
             include_summary,
+            cli.summary_only,
             cli.name.as_deref(),
             cli.ocr,
+            cli.no_merge,
             &parser_config,
+            cli.style,
         )?;
         if !output.is_empty() {
             info!("\n输出文件: {}", output);
         }
     } else {
-        // 无参数时启动 GUI
         #[cfg(feature = "gui")]
         {
             crate::gui::launch_gui();
@@ -332,7 +477,6 @@ pub fn run_cli() -> Result<()> {
         }
         #[cfg(not(feature = "gui"))]
         {
-            // 打印 help
             Cli::parse_from(&["xingda-jiesuan", "--help"]);
         }
     }

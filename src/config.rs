@@ -67,6 +67,38 @@ pub struct ExcelStyle {
     pub header_row_height: f64,
 }
 
+/// Excel 样式预设（对应 --style 参数）
+#[derive(Debug, Clone, Copy, clap::ValueEnum, PartialEq, Eq)]
+pub enum StylePreset {
+    /// 紧凑样式（小字体、窄列宽）
+    Compact,
+    /// 宽松样式（大字体、宽列宽）
+    Wide,
+}
+
+impl ExcelStyle {
+    /// 应用样式预设
+    pub fn apply_preset(mut self, preset: StylePreset) -> Self {
+        match preset {
+            StylePreset::Compact => {
+                self.font_size = 12.0;
+                self.col_width_a = 60.0;
+                self.col_width_b = 30.0;
+                self.col_width_c = 16.0;
+                self.header_row_height = 30.0;
+            }
+            StylePreset::Wide => {
+                self.font_size = 18.0;
+                self.col_width_a = 100.0;
+                self.col_width_b = 50.0;
+                self.col_width_c = 28.0;
+                self.header_row_height = 48.0;
+            }
+        }
+        self
+    }
+}
+
 impl Default for ExcelStyle {
     fn default() -> Self {
         Self {

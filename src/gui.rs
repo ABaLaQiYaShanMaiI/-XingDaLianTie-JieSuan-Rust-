@@ -340,7 +340,7 @@ fn process_in_thread(
     send_log(LogMessage::Info("正在解析 PDF...".to_string()));
 
     let parser_config = ParserConfig::default();
-    let mut data = parse_pdf(pdf_path, enable_ocr, &parser_config)
+    let mut data = parse_pdf(pdf_path, enable_ocr, false, &parser_config)
         .map_err(|e| format!("PDF解析失败: {}", e))?;
 
     send_log(LogMessage::Info(format!(
@@ -394,6 +394,7 @@ fn process_in_thread(
         &rules.area_order,
         &excel_style,
         include_summary,
+        false, // GUI mode always includes detail sheets
     )
     .map_err(|e| format!("Excel生成失败: {}", e))?;
 

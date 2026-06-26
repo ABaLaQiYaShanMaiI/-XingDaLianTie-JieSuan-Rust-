@@ -85,8 +85,9 @@ fn boundary_patterns() -> &'static [Regex] {
 /// 解析 PDF 结算单，返回 SettlementData 对象
 ///
 /// `enable_ocr`: 当 PDF 无文本层时，是否启用 Tesseract+Ghostscript OCR
+/// `no_merge`: 禁用多行合并（调试用）
 /// `parser_config`: 解析器/Parser配置（OCR DPI、语言等）
-pub fn parse_pdf(pdf_path: &str, enable_ocr: bool, parser_config: &ParserConfig) -> Result<SettlementData> {
+pub fn parse_pdf(pdf_path: &str, enable_ocr: bool, no_merge: bool, parser_config: &ParserConfig) -> Result<SettlementData> {
     info!("正在读取 PDF: {}", pdf_path);
 
     let path = Path::new(pdf_path);
@@ -114,7 +115,7 @@ pub fn parse_pdf(pdf_path: &str, enable_ocr: bool, parser_config: &ParserConfig)
     extract_fee_info(&mut data, &full_text);
 
     // --- 文本行提取考核记录 ---
-    let records = extract_from_text(&full_text, parser_config);
+    let records = extract_from_text(&full_text, no_merge, parser_config);
 
     info!("文本通道提取 {} 条记录", records.len());
 
@@ -474,15 +475,19 @@ fn pre_merge_split_lines(raw_lines: &[&str]) -> Vec<String> {
 }
 
 /// 从 extract_text 的原始文本中解析考核记录
-fn extract_from_text(full_text: &str, config: &ParserConfig) -> Vec<AssessmentRecord> {
+fn extract_from_text(full_text: &str, no_merge: bool, config: &ParserConfig) -> Vec<AssessmentRecord> {
     let mut records: Vec<AssessmentRecord> = Vec::new();
     let raw_lines: Vec<&str> = full_text.split('\n').collect();
 
     debug!("原始行数: {}", raw_lines.len());
 
     // 预处理：合并序号与描述被 PDF 文本提取拆分到两行的情况
-    // 例如 "2" 单独一行，下一行 "3月 11日，..." → 合并为 "2 3月 11日，..."
-    let lines = pre_merge_split_lines(&raw_lines);
+    let lines: Vec<String> = if no_merge {
+        // --no-merge 调试模式：跳过合并
+        raw_lines.iter().map(|s| s.to_string()).collect()
+    } else {
+        pre_merge_split_lines(&raw_lines)
+    };
 
     debug!("合并后行数: {}", lines.len());
 
