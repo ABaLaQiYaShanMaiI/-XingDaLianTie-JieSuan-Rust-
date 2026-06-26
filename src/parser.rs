@@ -152,7 +152,7 @@ fn extract_pdf_text(pdf_path: &str) -> Result<String> {
             let doc = lopdf::Document::load_mem(&bytes)
                 .map_err(|e2| XingDaError::Parse(format!("PDF 解析失败: pdf-extract={}, lopdf={}", e, e2)))?;
             let mut all_text = String::new();
-            for page_num in 1..=doc.num_pages() {
+            for page_num in 1..=doc.get_pages().len() as u32 {
                 match doc.extract_text(&[page_num]) {
                     Ok(text) => {
                         all_text.push_str(&text);
@@ -238,16 +238,16 @@ fn extract_fee_info(data: &mut SettlementData, full_text: &str) {
     // 策略1: 从底部结算公式合计行提取
     let sum_re = Regex::new(r"合计\s+(\d[\d,.]*)\s+(\d[\d,.]*)\s+(\d[\d,.]*)\s+(\d[\d,.]*)").unwrap();
     if let Some(caps) = sum_re.captures(full_text) {
-        data.work_fee = parse_amount(caps.get(1));
+        data.work_fee = parse_amount(caps.get(1)).unwrap_or(0.0);
         data.pdf_stated_total = parse_amount(caps.get(2));
-        data.total_reward = parse_amount(caps.get(3));
-        data.settlement_amount = parse_amount(caps.get(4));
-        info!("  作业费用: {:,.2}", data.work_fee);
+        data.total_reward = parse_amount(caps.get(3)).unwrap_or(0.0);
+        data.settlement_amount = parse_amount(caps.get(4)).unwrap_or(0.0);
+        info!("  作业费用: {:.2}", data.work_fee);
         if let Some(total) = data.pdf_stated_total {
-            info!("  PDF 考核金额合计: {:,.2}", total);
+            info!("  PDF 考核金额合计: {:.2}", total);
         }
-        info!("  嘉奖金额: {:,.2}", data.total_reward);
-        info!("  当月结算费用: {:,.2}", data.settlement_amount);
+        info!("  嘉奖金额: {:.2}", data.total_reward);
+        info!("  当月结算费用: {:.2}", data.settlement_amount);
         return;
     }
 
@@ -283,11 +283,11 @@ fn extract_fee_info(data: &mut SettlementData, full_text: &str) {
         large_amounts.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
         data.pdf_stated_total = large_amounts.into_iter().next();
         if let Some(total) = data.pdf_stated_total {
-            info!("  PDF 推断考核合计: {:,.2}", total);
+            info!("  PDF 推断考核合计: {:.2}", total);
         }
     }
     if let Some(total) = data.pdf_stated_total {
-        info!("  PDF 声明考核合计: {:,.2}", total);
+        info!("  PDF 声明考核合计: {:.2}", total);
     }
 
     // 当月结算费用
@@ -298,8 +298,8 @@ fn extract_fee_info(data: &mut SettlementData, full_text: &str) {
         }
     }
 
-    info!("  作业费用: {:,.2}", data.work_fee);
-    info!("  嘉奖金额: {:,.2}", data.total_reward);
+    info!("  作业费用: {:.2}", data.work_fee);
+    info!("  嘉奖金额: {:.2}", data.total_reward);
 }
 
 fn parse_amount(m: Option<regex::Match<'_>>) -> Option<f64> {
@@ -321,7 +321,7 @@ fn extract_reward_amount(full_text: &str) -> f64 {
         if let Some(caps) = re1.captures(full_text) {
             if let Some(m) = caps.get(2) {
                 if let Ok(val) = m.as_str().replace(",", "").parse::<f64>() {
-                    debug!("  嘉奖金额（策略1: 三行模式）: {:,.2}", val);
+                    debug!("  嘉奖金额（策略1: 三行模式）: {:.2}", val);
                     return val;
                 }
             }
@@ -334,7 +334,7 @@ fn extract_reward_amount(full_text: &str) -> f64 {
         if let Some(caps) = re2.captures(full_text) {
             if let Some(m) = caps.get(1) {
                 if let Ok(val) = m.as_str().replace(",", "").parse::<f64>() {
-                    debug!("  嘉奖金额（策略2: 直接匹配）: {:,.2}", val);
+                    debug!("  嘉奖金额（策略2: 直接匹配）: {:.2}", val);
                     return val;
                 }
             }
@@ -354,7 +354,7 @@ fn extract_reward_amount(full_text: &str) -> f64 {
                 .collect();
             if let Some(&val) = all_nums.last() {
                 if val > 10.0 {
-                    debug!("  嘉奖金额（策略3a: 同行末位）: {:,.2}", val);
+                    debug!("  嘉奖金额（策略3a: 同行末位）: {:.2}", val);
                     return val;
                 }
             }
@@ -368,7 +368,7 @@ fn extract_reward_amount(full_text: &str) -> f64 {
                 if let Some(caps) = num_re.captures(scan_line) {
                     if let Some(m) = caps.get(1) {
                         if let Ok(val) = m.as_str().replace(",", "").parse::<f64>() {
-                            debug!("  嘉奖金额（策略3b: {}行后）: {:,.2}", offset, val);
+                            debug!("  嘉奖金额（策略3b: {}行后）: {:.2}", offset, val);
                             return val;
                         }
                     }
@@ -392,7 +392,7 @@ fn extract_reward_amount(full_text: &str) -> f64 {
             if !amounts.is_empty() {
                 amounts.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
                 let val = amounts[0];
-                debug!("  嘉奖金额（策略4: 区间最大值）: {:,.2}", val);
+                debug!("  嘉奖金额（策略4: 区间最大值）: {:.2}", val);
                 return val;
             }
         }

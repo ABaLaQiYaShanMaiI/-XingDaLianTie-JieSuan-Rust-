@@ -32,41 +32,33 @@ pub fn generate_excel(
     let mut workbook = Workbook::new();
 
     // ---- 定义格式 ----
-    // 标题字体格式（黑体）
     let header_format = Format::new()
         .set_bold()
         .set_font_size(style.font_size)
         .set_font_name(&style.font_name);
 
-    // 普通数据字体格式
     let data_format = Format::new()
         .set_font_size(style.font_size)
         .set_font_name(&style.font_name);
 
-    // 金额数字格式
     let amount_format = Format::new()
         .set_font_size(style.font_size)
         .set_font_name(&style.font_name)
         .set_num_format("#,##0.00");
 
-    // 红色错误格式
     let red_format = Format::new()
         .set_bold()
         .set_font_size(style.font_size)
         .set_font_name(&style.font_name)
         .set_font_color(Color::Red);
 
-    // 居中对齐格式
-    let center_header_format = header_format.clone();
-    // (rust_xlsxwriter 默认左对齐，我们通过列宽和内容来容处理)
-
     // 创建工作表
-    let sheet_name = if data.month_label.is_empty() {
+    let _sheet_name = if data.month_label.is_empty() {
         "结算明细"
     } else {
         &data.month_label
     };
-    let worksheet = workbook.add_worksheet();
+    let mut worksheet = workbook.add_worksheet();
 
     // 设置列宽
     worksheet.set_column_width(0, style.col_width_a)?;
@@ -78,7 +70,7 @@ pub fn generate_excel(
     // --- 1. 汇总信息区域 ---
     if include_summary {
         current_row = write_summary_section(
-            &worksheet,
+            &mut worksheet,
             current_row,
             data,
             &header_format,
@@ -95,11 +87,11 @@ pub fn generate_excel(
             }
 
             if idx > 0 {
-                current_row += 1; // 区域间空行
+                current_row += 1;
             }
 
             current_row = write_area_section(
-                &worksheet,
+                &mut worksheet,
                 current_row,
                 area_data,
                 &header_format,
@@ -114,7 +106,7 @@ pub fn generate_excel(
     if !data.amount_match {
         current_row += 1;
         let warning_text = format!(
-            "⚠ 金额校验失败：PDF 声明合计 ¥{:,.2}，程序提取合计 ¥{:,.2}，偏差 {:.2}%",
+            "⚠ 金额校验失败：PDF 声明合计 ¥{:.2}，程序提取合计 ¥{:.2}，偏差 {:.2}%",
             data.pdf_stated_total.unwrap_or(0.0),
             data.total_assessment,
             data.amount_deviation_pct * 100.0
@@ -137,7 +129,7 @@ pub fn generate_excel(
 
 /// 写入汇总信息区域
 fn write_summary_section(
-    ws: &Worksheet,
+    ws: &mut Worksheet,
     start_row: u32,
     data: &SettlementData,
     header_format: &Format,
@@ -150,7 +142,6 @@ fn write_summary_section(
     ws.merge_range(row, 0, row, 2, "结算单汇总信息", header_format)?;
     row += 1;
 
-    // 合同基本信息 - 每行写入 label + value
     let info_items: Vec<(String, String)> = vec![
         ("合同编号".to_string(), data.contract_no.clone()),
         ("合同名称".to_string(), data.contract_name.clone()),
@@ -163,10 +154,8 @@ fn write_summary_section(
         row += 1;
     }
 
-    // 空行
     row += 1;
 
-    // 费用信息
     let fee_items: Vec<(String, f64)> = vec![
         ("作业费用".to_string(), data.work_fee),
         ("考核金额合计".to_string(), data.total_assessment),
@@ -180,21 +169,18 @@ fn write_summary_section(
         row += 1;
     }
 
-    // 空行
     row += 1;
 
     // 区域考核概览标题
     ws.merge_range(row, 0, row, 2, "区域考核概览", header_format)?;
     row += 1;
 
-    // 表头
     let area_headers = ["区域", "条数", "考核金额小计"];
     for (col_idx, header) in area_headers.iter().enumerate() {
         ws.write_with_format(row, col_idx as u16, *header, header_format)?;
     }
     row += 1;
 
-    // 数据行
     for (area_name, area_data) in &data.areas {
         if area_data.records.is_empty() {
             continue;
@@ -205,12 +191,12 @@ fn write_summary_section(
         row += 1;
     }
 
-    Ok(row + 1) // 空一行再返回
+    Ok(row + 1)
 }
 
 /// 写入单个区域明细
 fn write_area_section(
-    ws: &Worksheet,
+    ws: &mut Worksheet,
     start_row: u32,
     area_data: &AreaData,
     header_format: &Format,
@@ -220,7 +206,6 @@ fn write_area_section(
 ) -> Result<u32> {
     let mut row = start_row;
 
-    // 区域标题行
     ws.merge_range(
         row,
         0,
@@ -231,7 +216,6 @@ fn write_area_section(
     )?;
     row += 1;
 
-    // 表头行
     ws.set_row_height(row, style.header_row_height)?;
     let headers = ["考核\n事项", "条款", "考核\n金额"];
     for (col_idx, header) in headers.iter().enumerate() {
@@ -239,7 +223,6 @@ fn write_area_section(
     }
     row += 1;
 
-    // 数据行
     for record in &area_data.records {
         let desc = if record.description.is_empty() {
             ""

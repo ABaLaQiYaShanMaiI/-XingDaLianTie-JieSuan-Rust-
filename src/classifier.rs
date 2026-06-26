@@ -44,7 +44,7 @@ pub fn classify_records(data: &mut SettlementData, rules: &ClassifyRules) {
     for name in &rules.area_order {
         if let Some(area_data) = data.areas.get(name) {
             let sub: f64 = area_data.records.iter().map(|r| r.amount).sum();
-            info!("  {}: {} 条，小计 ¥{:,.2}", name, area_data.records.len(), sub);
+            info!("  {}: {} 条，小计 ¥{:.2}", name, area_data.records.len(), sub);
         }
     }
 

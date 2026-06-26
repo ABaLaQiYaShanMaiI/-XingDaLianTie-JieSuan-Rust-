@@ -108,7 +108,8 @@ pub fn process_single(
 
     // 导出原始文本（调试用）
     if dump_text {
-        let txt_filename = pdf_p.with_extension("txt").file_name()
+        let txt_path = pdf_p.with_extension("txt");
+        let txt_filename = txt_path.file_name()
             .ok_or_else(|| XingDaError::Parse("PDF文件名无法解析".into()))?;
         let txt_out = out_dir.join(txt_filename);
         std::fs::write(&txt_out, &data.raw_text)
@@ -162,7 +163,7 @@ pub fn process_single(
     let total = data.total_assessment;
     let status = if is_valid { "✅ 校验通过" } else { "❌ 校验失败" };
     info!(
-        "解析 {} 条考核记录 / 总金额 ¥{:,.2} / {}",
+        "解析 {} 条考核记录 / 总金额 ¥{:.2} / {}",
         records_count, total, status
     );
 
@@ -227,7 +228,7 @@ pub fn batch_process(
                     info!("  ✅ {} 校验完成（未生成文件）",
                         pdf_file.file_name().unwrap_or_default().to_str().unwrap_or(""));
                 } else {
-                    let filename = Path::new(&result).file_name().and_then(|s| s.to_str()).unwrap_or("");
+                    let filename = Path::new(&result).file_name().and_then(|s| s.to_str()).map(|s| s.to_string()).unwrap_or_default();
                     results.push(result);
                     info!("  ✅ {} → {}",
                         pdf_file.file_name().unwrap_or_default().to_str().unwrap_or(""), filename);
