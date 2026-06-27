@@ -11,3 +11,10 @@
 # OS
 .DS_Store
 Thumbs.db
+
+# 分发目录（LianTieJieSuan/tools/ 下的第三方二进制不入库）
+LianTieJieSuan/xingda-jiesuan.exe
+LianTieJieSuan/classify_rules.yaml
+LianTieJieSuan/tools/*.exe
+LianTieJieSuan/tools/*.dll
+LianTieJieSuan/tools/tessdata/
