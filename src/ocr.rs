@@ -252,8 +252,8 @@ fn which_cmd(cmd: &str) -> Option<PathBuf> {
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
-        // `where` 可能返回多条路径，取第一条
-        stdout.lines().next().map(PathBuf::from)
+        // `where` 可能返回多条路径，取第一条并 trim 不可见字符
+        stdout.lines().next().map(|s| PathBuf::from(s.trim()))
     } else {
         None
     }
@@ -628,10 +628,12 @@ fn clean_ocr_text(raw: &str) -> String {
 ///
 /// 示例：`"1  3月 11日，原料分厂..."`、`"12  2025年 合同评价..."`、`"5  近 3 年 安全记录..."`
 fn is_new_record_start(line: &str) -> bool {
-    let re = Regex::new(
-        r"^\s*\d{1,2}\s+(\d+\s*-\s*\d+\s*月|\d+\s*月|近\s*\d+\s*年|\d{4}\s*年|[一二三四五六七八九十]+\s*季度)"
-    ).unwrap();
-    re.is_match(line)
+    static RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+        Regex::new(
+            r"^\s*\d{1,2}\s+(\d+\s*-\s*\d+\s*月|\d+\s*月|近\s*\d+\s*年|\d{4}\s*年|[一二三四五六七八九十]+\s*季度)"
+        ).unwrap()
+    });
+    RE.is_match(line)
 }
 
 // ============================================================

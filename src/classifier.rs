@@ -14,14 +14,11 @@ pub fn classify_records(data: &mut SettlementData, rules: &ClassifyRules) {
         let area_name = classify_one(&data.all_records[i], &rules.areas);
         data.all_records[i].area = area_name.clone();
 
-        // 确保区域一定存在（classify_one 可能返回「未分类」等未在 rules.areas 中预定义的区域名）
+        // 确保区域存在并直接添加记录（仅一次哈希查找）
         data.areas
             .entry(area_name.clone())
-            .or_insert_with(|| AreaData::new(area_name));
-
-        if let Some(area) = data.areas.get_mut(&data.all_records[i].area) {
-            area.add_record(data.all_records[i].clone());
-        }
+            .or_insert_with(|| AreaData::new(area_name))
+            .add_record(data.all_records[i].clone());
     }
 
     // 计算各区域小计

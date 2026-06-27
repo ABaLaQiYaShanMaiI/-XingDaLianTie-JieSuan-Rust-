@@ -270,13 +270,15 @@ fn extract_contract_info(data: &mut SettlementData, full_text: &str) {
 /// 合并为 "2 3月 11日，原料分厂..." 以便正则匹配。
 fn pre_merge_split_lines(raw_lines: &[&str]) -> Vec<String> {
     let mut merged: Vec<String> = Vec::new();
-    let approx_idx_re = Regex::new(r"^\s*\d{1,2}\s*$").unwrap();
+    static APPROX_IDX_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+        Regex::new(r"^\s*\d{1,2}\s*$").unwrap()
+    });
 
     let len = raw_lines.len();
     let mut i = 0;
     while i < len {
         let line = raw_lines[i].trim();
-        if approx_idx_re.is_match(line) && i + 1 < len {
+        if APPROX_IDX_RE.is_match(line) && i + 1 < len {
             // parse().unwrap_or(0) — 正则已保证此处字符串为数字，unwrap_or 仅做安全兜底
             let idx_num: i32 = line.parse().unwrap_or(0);
             // 仅当 1..=99 的合法序号 + 下一行以日期开头时合并
@@ -361,8 +363,10 @@ fn extract_from_text(full_text: &str, no_merge: bool, config: &ParserConfig) -> 
             current_record_lines = vec![line.to_string()];
         } else if !current_record_lines.is_empty() {
             // 续行：追加到当前记录
-            let skip_re = Regex::new(r"^(第\d+页|编号|项目|合计|小计|总计|合同嘉奖|嘉奖)").unwrap();
-            if !skip_re.is_match(line) {
+            static SKIP_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+                Regex::new(r"^(第\d+页|编号|项目|合计|小计|总计|合同嘉奖|嘉奖)").unwrap()
+            });
+            if !SKIP_RE.is_match(line) {
                 current_record_lines.push(line.to_string());
             }
         }
@@ -394,8 +398,10 @@ fn build_text_record(lines: &[String], config: &ParserConfig) -> Option<Assessme
     let full_line = lines.join(" ");
 
     // 解析序号（编译期保证的模式，Regex::new().unwrap() 安全）
-    let idx_match = Regex::new(r"^(\d{1,2})\s+").unwrap();
-    let caps = idx_match.captures(&full_line)?;
+    static IDX_MATCH_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+        Regex::new(r"^(\d{1,2})\s+").unwrap()
+    });
+    let caps = IDX_MATCH_RE.captures(&full_line)?;
     let index: i32 = caps.get(1)?.as_str().parse().ok()?;
 
     if index < 1 || index > config.max_item_index {
@@ -423,9 +429,10 @@ fn build_text_record(lines: &[String], config: &ParserConfig) -> Option<Assessme
     // 条款回退：从描述中提取条款编号（中文数字、阿拉伯数字 + 顿号/点号）
     // 匹配示例："（二）"、"1."、"（3）"等
     if clauses.is_empty() {
-        let fallback_clause_re =
-            Regex::new(r"[（(][一二三四五六七八九十\d]+[）)]|\d+\.[\s\u{00A0}]").unwrap();
-        for m in fallback_clause_re.find_iter(&remainder) {
+        static FALLBACK_CLAUSE_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+            Regex::new(r"[（(][一二三四五六七八九十\d]+[）)]|\d+\.[\s\u{00A0}]").unwrap()
+        });
+        for m in FALLBACK_CLAUSE_RE.find_iter(&remainder) {
             clauses.push(m.as_str().to_string());
         }
     }
@@ -443,13 +450,15 @@ fn build_text_record(lines: &[String], config: &ParserConfig) -> Option<Assessme
         desc = desc.replace(clause.as_str(), "");
     }
     // 2) 移除末尾金额数字
-    if let Ok(amount_re) = Regex::new(r"\d+(?:,\d+)*(?:\.\d+)??\s*$") {
-        desc = amount_re.replace(&desc, "").to_string();
-    }
+    static AMOUNT_CLEANUP_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+        Regex::new(r"\d+(?:,\d+)*(?:\.\d+)??\s*$").unwrap()
+    });
+    desc = AMOUNT_CLEANUP_RE.replace(&desc, "").to_string();
     // 3) 合并多个空格
-    if let Ok(ws_re) = Regex::new(r"\s+") {
-        desc = ws_re.replace_all(&desc, "").to_string();
-    }
+    static WS_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+        Regex::new(r"\s+").unwrap()
+    });
+    desc = WS_RE.replace_all(&desc, "").to_string();
 
     // 校验描述
     if !assessment_desc_re().is_match(&desc) {

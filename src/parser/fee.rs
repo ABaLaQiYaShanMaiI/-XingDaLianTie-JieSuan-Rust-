@@ -12,8 +12,10 @@ use super::reward::extract_reward_amount;
 
 /// 从文本中提取最后一个数字作为金额
 pub fn extract_final_number(text: &str) -> Option<f64> {
-    let num_re = Regex::new(r"\d+(?:,\d+)*(?:\.\d+)?").unwrap();
-    num_re.captures_iter(text)
+    static NUM_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+        Regex::new(r"\d+(?:,\d+)*(?:\.\d+)?").unwrap()
+    });
+    NUM_RE.captures_iter(text)
         .last()
         .and_then(|caps| caps.get(0))
         .and_then(|m| m.as_str().replace(",", "").parse::<f64>().ok())

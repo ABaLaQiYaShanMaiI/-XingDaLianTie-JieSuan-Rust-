@@ -149,6 +149,8 @@ pub fn setup_logging(level: &str, log_file: Option<&str>) {
 /// GetSystemTimeAsFileTime (Win7 兼容)，不会调用 Win8+ 才有的
 /// GetSystemTimePreciseAsFileTime，避免 Win7 上启动报错。
 fn chrono_timestamp() -> String {
+    // 使用 UTC 而非 Local，避免 chrono clock 特性在 Windows 上调用
+    // GetSystemTimePreciseAsFileTime（Win8+ 专有），确保 Win7 兼容性。
     chrono::Utc::now().format("%Y-%m-%d_%H-%M-%S").to_string()
 }
 

@@ -35,6 +35,9 @@ pub fn generate_excel(
     // ---- 定义格式 ----
 
     // 居中 + 边框 + 普通字体
+    // Note: rust_xlsxwriter uses set_align() for both horizontal and vertical
+    // alignment; FormatAlign::Center = horizontal center,
+    // FormatAlign::VerticalCenter = vertical center. They do NOT override each other.
     let center_format = Format::new()
         .set_font_size(style.font_size)
         .set_font_name(&style.font_name)
@@ -97,9 +100,6 @@ pub fn generate_excel(
         .set_align(FormatAlign::VerticalCenter)
         .set_text_wrap()
         .set_border(thin_border);
-
-    // 创建工作表
-    let mut worksheet = workbook.add_worksheet();
 
     // 设置列宽
     worksheet.set_column_width(0, style.col_width_a)?;
