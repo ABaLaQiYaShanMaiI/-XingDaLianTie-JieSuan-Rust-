@@ -33,9 +33,11 @@ WINDOWS_TARGET_PLATFORM_MINVERSION = "0x0601"
 [target.x86_64-pc-windows-msvc]
 rustflags = [
     "-C", "link-arg=/SUBSYSTEM:CONSOLE,6.01",
+    "-C", "target-feature=+crt-static",
 ]
 
 [target.i686-pc-windows-msvc]
 rustflags = [
     "-C", "link-arg=/SUBSYSTEM:CONSOLE,6.01",
+    "-C", "target-feature=+crt-static",
 ]

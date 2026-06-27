@@ -18,9 +18,11 @@ use crate::error::{Result, XingDaError};
 // 工具路径检测
 // ============================================================
 
-/// Ghostscript 可执行文件名（按平台区分）
-#[cfg(target_os = "windows")]
+/// Ghostscript 可执行文件名（按平台和架构区分）
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 const GS_EXE: &str = "gswin64c.exe";
+#[cfg(all(target_os = "windows", target_arch = "x86"))]
+const GS_EXE: &str = "gswin32c.exe";
 #[cfg(not(target_os = "windows"))]
 const GS_EXE: &str = "gs";
 
