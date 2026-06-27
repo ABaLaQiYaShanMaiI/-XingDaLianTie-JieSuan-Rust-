@@ -8,4 +8,8 @@
 fn main() {
     // 当 classify_rules.yaml 变化时重新编译
     println!("cargo:rerun-if-changed=classify_rules.yaml");
+
+    // Windows 7 兼容性配置见 .cargo/config.toml
+    // (rustflags 方式不会像 cargo:rustc-link-arg 那样泄露到
+    //  依赖 crate 的 build scripts，避免 WinMain 链接错误)
 }
