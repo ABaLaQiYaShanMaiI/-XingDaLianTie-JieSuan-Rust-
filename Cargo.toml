@@ -7,6 +7,16 @@ edition = "2021"
 license = "MIT"
 
 # ============================================================
+# Feature flags
+# ============================================================
+[features]
+default = ["gui"]
+gui = ["eframe", "egui", "rfd"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("gui"))'] }
+
+# ============================================================
 # Workspace 配置
 # ============================================================
 
@@ -31,7 +41,7 @@ clap = { version = "4", features = ["derive"] }
 # --- 日志 ---
 log = "0.4"
 env_logger = "0.11"
-time = "0.3"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 
 # --- 错误处理 ---
 thiserror = "2"
@@ -50,9 +60,9 @@ indicatif = "0.17"
 dirs = "5"
 
 # --- GUI (eframe/egui) ---
-eframe = "0.31"
-egui = "0.31"
-rfd = "0.15"
+eframe = { version = "0.31", optional = true }
+egui = { version = "0.31", optional = true }
+rfd = { version = "0.15", optional = true }
 
 # --- 字符编码 ---
 encoding_rs = "0.8"

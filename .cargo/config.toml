@@ -6,34 +6,29 @@
 #   "无法定位程序输入点 GetSystemTimePreciseAsFileTime
 #    于动态链接库 kernel32.dll 上"
 #
-# 根因: Rust 标准库(std)预编译时使用了 Win8+ API。
-#       PE 加载器在解析导入表时发现缺失→直接报错终止。
-#       链接器级别无法消除 DLL 导入符号(__imp_前缀)。
+# 修复策略（三层防护）:
+#   [源码层] src/cli.rs → chrono crate 替代 time crate
+#     chrono 仅使用 GetSystemTimeAsFileTime (Win7+ 存在)
+#   [PE层]  build_and_verify.bat [3/4] → fix_win7_import.py
+#     修改编译后 PE 的 ILT，将 stdlib 残留的
+#     GetSystemTimePreciseAsFileTime 重定向为
+#     GetSystemTimeAsFileTime（与 Rust 版本无关，1.78+ 均适用）
+#   [PE头]  /SUBSYSTEM:CONSOLE,6.01 → 标记最低 OS 为 Win7
 #
-# 修复方法 (二选一):
-# ============================================================
-# 方案 A: build.rs 自动执行 Python 脚本修复 PE (推荐)
-#   构建完成后自动运行 fix_win7_import.py 脚本，
-#   将导入表中的 GetSystemTimePreciseAsFileTime 条目
-#   重定向为 GetSystemTimeAsFileTime。
-#   使用方法: 确保 python + pefile 已安装，正常构建即可。
-# ============================================================
-# 方案 B: 从源码编译标准库 (需要 nightly)
-#   rustup toolchain install nightly
-#   set _WIN32_WINNT=0x0601
-#   cargo +nightly build -Z build-std=std,panic_abort --release
-#   (编译时间较长，但最彻底)
-# ============================================================
-#
-# /SUBSYSTEM:CONSOLE,6.01 → PE 头标记最低 OS 为 Win7
-#
+# 关于 Rust 工具链版本:
+#   当前使用 Rust 1.96.0，stdlib 会在 SystemTime::now() 中
+#   导入 GetSystemTimePreciseAsFileTime。fix_win7_import.py
+#   的 PE 后处理可处理任意 Rust 版本生成的二进制——它直接
+#   修改导入表，不依赖编译器行为。
+#   如需额外保障，可安装 Rust 1.77 工具链:
+#     rustup toolchain install 1.77.0
+#     cargo +1.77.0 build --release
+#   (1.77 的 std 不导入 GetSystemTimePreciseAsFileTime)
 # ============================================================
 
 [env]
 # 告知 windows/windows-sys crate 生成 Win7 (6.1) 兼容绑定
 WINDOWS_TARGET_PLATFORM_MINVERSION = "0x0601"
-# 如果使用方案 B，取消注释下一行:
-# _WIN32_WINNT = "0x0601"
 
 [target.x86_64-pc-windows-msvc]
 rustflags = [

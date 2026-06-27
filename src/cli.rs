@@ -145,17 +145,11 @@ pub fn setup_logging(level: &str, log_file: Option<&str>) {
 }
 
 /// 生成日志文件时间戳字符串（跨平台安全格式）
+/// 使用 chrono crate 替代 time crate：chrono 在 Windows 上仅使用
+/// GetSystemTimeAsFileTime (Win7 兼容)，不会调用 Win8+ 才有的
+/// GetSystemTimePreciseAsFileTime，避免 Win7 上启动报错。
 fn chrono_timestamp() -> String {
-    let dt = time::OffsetDateTime::now_utc();
-    format!(
-        "{:04}-{:02}-{:02}_{:02}-{:02}-{:02}",
-        dt.year(),
-        dt.month() as u8,
-        dt.day(),
-        dt.hour(),
-        dt.minute(),
-        dt.second()
-    )
+    chrono::Utc::now().format("%Y-%m-%d_%H-%M-%S").to_string()
 }
 
 /// 日志文件写入器（超过 5MB 自动归档为 .old，每次 write 检查文件元数据）
@@ -274,7 +268,7 @@ pub fn process_single_with_options(
         .map_err(|e| XingDaError::Parse(format!("无法创建输出目录: {}", e)))?;
 
     // --- 核心处理：解析 + 分类 + 校验 ---
-    let (mut data, rules, excel_style, is_valid) = process_pdf_core(
+    let (data, rules, excel_style, is_valid) = process_pdf_core(
         pdf_path,
         options.rules_path,
         options.enable_ocr,

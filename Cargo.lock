@@ -4813,6 +4813,7 @@ name = "xingda-jiesuan"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "dirs",
  "eframe",
@@ -4832,7 +4833,6 @@ dependencies = [
  "serde",
  "serde_yaml",
  "thiserror 2.0.18",
- "time",
  "unicode-segmentation",
  "windows",
 ]
