@@ -1,14 +1,13 @@
-@echo off
 chcp 65001 >nul
 cd /d "%~dp0"
 echo ========================================
-echo   Windows 7 兼容性修复 - 构建 & 验证
+echo   Windows 7 兼容性修复 - 构建 ^& 验证
 echo ========================================
 echo.
-echo [1/3] 清理旧构建...
+echo [1/4] 清理旧构建...
 cargo clean
 echo.
-echo [2/3] 构建 release...
+echo [2/4] 构建 release...
 cargo build --release
 if %ERRORLEVEL% neq 0 (
     echo.
@@ -17,18 +16,29 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 echo.
-echo [3/3] 验证 PE 子系统版本...
+echo [3/4] 修复 PE 导入表 (Win7 兼容)...
+if exist "target\release\xingda-jiesuan.exe" (
+    python fix_win7_import.py "target\release\xingda-jiesuan.exe"
+    if %ERRORLEVEL% neq 0 (
+        echo [WARN] PE 导入表修复失败，但可执行文件可能仍然可用
+        echo        若在 Windows 7 上运行报错，请手动运行:
+        echo        python fix_win7_import.py target\release\xingda-jiesuan.exe
+    )
+) else (
+    echo [ERROR] 未找到 target\release\xingda-jiesuan.exe
+    pause
+    exit /b 1
+)
+echo.
+echo [4/4] 验证...
 if exist "target\release\xingda-jiesuan.exe" (
     echo.
     echo ========================================
     echo   构建成功！
     echo ========================================
     echo.
+    echo --- PE 子系统版本 ---
     dumpbin /headers "target\release\xingda-jiesuan.exe" | findstr /i "subsystem"
     echo.
-    echo 期望输出: 6.01 (Console) 或 6.01 subsystem version
-    echo ========================================
-) else (
-    echo [ERROR] 未找到 target\release\xingda-jiesuan.exe
-)
-pause
+    echo --- kernel32 导入 ---
+    dumpbin /imports "target\release\xingda-jiesuan.exe" | findstr /i Get

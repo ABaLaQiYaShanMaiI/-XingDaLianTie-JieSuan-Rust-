@@ -6,43 +6,41 @@
 #   "无法定位程序输入点 GetSystemTimePreciseAsFileTime
 #    于动态链接库 kernel32.dll 上"
 #
-# 根因: Rust 标准库 (std::time::SystemTime::now()) 在 Windows
-#       上静态链接了 GetSystemTimePreciseAsFileTime，该 API
-#       仅在 Windows 8+ 的 kernel32.dll 中导出。
-#       time="0.3"、chrono、env_logger、eframe 等 crate
-#       通过 std 间接调用了该 API。
+# 根因: Rust 标准库(std)预编译时使用了 Win8+ API。
+#       PE 加载器在解析导入表时发现缺失→直接报错终止。
+#       链接器级别无法消除 DLL 导入符号(__imp_前缀)。
 #
-# 修复策略 (三层防护):
-#   1. /SUBSYSTEM:WINDOWS,6.01 → PE 头标记最低 OS 为 Win7
-#   2. /DELAYLOAD:kernel32.dll → 延迟加载，启动时不解析
-#      所有符号；Rust std 内建有 GetProcAddress 回退机制
-#      (GetSystemTimeAsFileTime)，因此运行时不会崩溃
-#   3. WINDOWS_TARGET_PLATFORM_MINVERSION → 告知 windows
-#      crate 生成 Win7 兼容的 FFI 绑定
+# 修复方法 (二选一):
+# ============================================================
+# 方案 A: build.rs 自动执行 Python 脚本修复 PE (推荐)
+#   构建完成后自动运行 fix_win7_import.py 脚本，
+#   将导入表中的 GetSystemTimePreciseAsFileTime 条目
+#   重定向为 GetSystemTimeAsFileTime。
+#   使用方法: 确保 python + pefile 已安装，正常构建即可。
+# ============================================================
+# 方案 B: 从源码编译标准库 (需要 nightly)
+#   rustup toolchain install nightly
+#   set _WIN32_WINNT=0x0601
+#   cargo +nightly build -Z build-std=std,panic_abort --release
+#   (编译时间较长，但最彻底)
+# ============================================================
 #
-# 注意: MSVC 链接器用逗号分隔版本号 (WINDOWS,6.01)
-#       不是冒号 (/SUBSYSTEM:WINDOWS:6.1 这种格式是错误的)
+# /SUBSYSTEM:CONSOLE,6.01 → PE 头标记最低 OS 为 Win7
+#
 # ============================================================
 
 [env]
 # 告知 windows/windows-sys crate 生成 Win7 (6.1) 兼容绑定
-# 值 0x0601 = Windows 7 (NT 6.1)
 WINDOWS_TARGET_PLATFORM_MINVERSION = "0x0601"
+# 如果使用方案 B，取消注释下一行:
+# _WIN32_WINNT = "0x0601"
 
-# 64 位 Windows 7+ 兼容
-# SUBSYSTEM:CONSOLE 保持控制台入口点 (main)，仅改最低 OS 版本号为 6.01
-# DELAYLOAD:kernel32.dll 延迟加载，启动时不解析 GetSystemTimePreciseAsFileTime
 [target.x86_64-pc-windows-msvc]
 rustflags = [
     "-C", "link-arg=/SUBSYSTEM:CONSOLE,6.01",
-    "-C", "link-arg=/DELAYLOAD:kernel32.dll",
-    "-C", "link-arg=delayimp.lib",
 ]
 
-# 32 位 Windows 7+ 兼容（可选）
 [target.i686-pc-windows-msvc]
 rustflags = [
     "-C", "link-arg=/SUBSYSTEM:CONSOLE,6.01",
-    "-C", "link-arg=/DELAYLOAD:kernel32.dll",
-    "-C", "link-arg=delayimp.lib",
 ]
