@@ -10,6 +10,7 @@ pub struct AssessmentRecord {
     pub clause: String,
     pub amount: f64,
     pub area: String,
+    pub remark: String,
     /// 解析来源: "table" 或 "text"
     pub parse_source: String,
     pub parse_warnings: Vec<String>,
@@ -23,6 +24,7 @@ impl AssessmentRecord {
             clause,
             amount,
             area: String::new(),
+            remark: String::new(),
             parse_source: String::new(),
             parse_warnings: Vec::new(),
         }
@@ -36,6 +38,10 @@ pub struct AreaData {
     pub records: Vec<AssessmentRecord>,
     pub subtotal: f64,
     pub dept_amount: f64,
+    pub amount_match: bool,
+    pub amount_deviation_pct: f64,
+    pub pdf_stated_total: Option<f64>,
+    pub computed_total: f64,
 }
 
 impl AreaData {
@@ -45,6 +51,10 @@ impl AreaData {
             records: Vec::new(),
             subtotal: 0.0,
             dept_amount: 0.0,
+            amount_match: true,
+            amount_deviation_pct: 0.0,
+            pdf_stated_total: None,
+            computed_total: 0.0,
         }
     }
 

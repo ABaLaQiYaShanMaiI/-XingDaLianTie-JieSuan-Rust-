@@ -113,7 +113,7 @@ pub fn setup_logging(level: &str, log_file: Option<&str>) {
     };
 
     let mut builder = env_logger::Builder::new();
-    builder.filter_level(level).format_timestamp_secs();
+    builder.filter_level(level);
 
     // 如果指定了日志文件，追加文件输出
     if let Some(path) = log_file {
