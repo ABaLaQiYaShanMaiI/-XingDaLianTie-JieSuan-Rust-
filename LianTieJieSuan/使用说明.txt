@@ -13,6 +13,93 @@
      或通过命令行使用（见下方）
 
 ═══════════════════════════════════════════════════════════════
+【零点五】Windows 7 运行前置条件与排障
+═══════════════════════════════════════════════════════════════
+
+  如果目标电脑是 Windows 7，请先看这一节，再双击 exe。
+
+  一、必须满足的前置条件
+  1. 必须是 Windows 7 SP1（建议 64 位）
+     未安装 SP1 的 Win7，程序启动失败概率很高。
+
+  2. 必须安装 Microsoft Visual C++ 2015-2022 运行库（x64）
+     缺少时，常见提示：
+       - 找不到 vcruntime140.dll
+       - 找不到 msvcp140.dll
+     处理方式：
+       - 从微软官方安装/修复 VC++ 2015-2022 x64 运行库
+       - 安装后重启电脑，再重新运行 xingda-jiesuan.exe
+       - 不建议从第三方网站单独下载 DLL 覆盖系统目录
+
+  3. Win7 常见还会缺少 UCRT / SHA-2 / 服务堆栈相关更新
+     这类情况下，即使 exe 已修复 GetSystemTimePreciseAsFileTime 导入，
+     程序仍可能无法启动，或提示缺少：
+       - api-ms-win-crt-*.dll
+       - ucrtbase.dll
+     处理方式：
+       - 先确认系统已经是 Win7 SP1
+       - 先补齐 Windows Update 中与 SHA-2、服务堆栈、UCRT 相关的常见更新
+       - 再重新安装 VC++ 2015-2022 x64 运行库
+
+  二、重要说明
+  仓库内的 fix_win7_import.py，只解决一个问题：
+    把 kernel32 导入里的 GetSystemTimePreciseAsFileTime
+    改为 GetSystemTimeAsFileTime
+
+  它的作用范围不包括：
+    - VC++ 运行库缺失
+    - UCRT 缺失
+    - Win7 补丁链 / SHA-2 更新缺失
+    - 其它系统运行时依赖缺失
+
+  所以：即使已经执行过 fix_win7_import.py，
+  程序仍可能因为运行库或系统补丁不完整而启动失败。
+
+  三、如何确认缺的是哪一层依赖
+  方法 1：看报错框或命令行提示
+    - 如果提示 vcruntime140.dll / msvcp140.dll 缺失：
+      优先处理 VC++ 2015-2022 x64 运行库
+    - 如果提示 api-ms-win-crt-*.dll 缺失：
+      优先处理 UCRT 与 Win7 系统更新
+
+  方法 2：用 dumpbin 检查导入表
+    在 Visual Studio 开发者命令行中执行：
+
+      dumpbin /imports xingda-jiesuan.exe
+
+    重点检查：
+      - 是否仍出现 GetSystemTimePreciseAsFileTime
+      - 是否能正常看到 kernel32 / VCRUNTIME / MSVCP / api-ms-win-crt 相关依赖
+
+    如果已经看不到 GetSystemTimePreciseAsFileTime，
+    但程序还是打不开，通常就不是这个导入问题本身，
+    而是运行库或系统补丁链问题。
+
+  方法 3：用 Dependency Walker / Dependencies 查看缺失模块
+    - 打开 xingda-jiesuan.exe
+    - 查看是否有红色或缺失标记的 DLL
+    - 重点关注：
+        vcruntime140.dll
+        msvcp140.dll
+        api-ms-win-crt-*.dll
+        ucrtbase.dll
+
+  四、建议排障顺序
+  1. 先确认系统版本：必须是 Win7 SP1
+  2. 安装/修复 VC++ 2015-2022 x64 运行库
+  3. 若仍报 api-ms-win-crt-*.dll，补齐 Win7 的 UCRT / SHA-2 / 服务堆栈更新
+  4. 重新安装 VC++ 运行库后重启
+  5. 用 dumpbin /imports 确认不再导入 GetSystemTimePreciseAsFileTime
+  6. 再用 Dependency Walker / Dependencies 检查缺失 DLL
+
+  五、最小自检清单
+    [ ] 当前系统是 Windows 7 SP1 x64
+    [ ] 已安装 Microsoft Visual C++ 2015-2022 运行库（x64）
+    [ ] Win7 常见 SHA-2 / 服务堆栈 / UCRT 更新已补齐
+    [ ] 已确认 fix_win7_import.py 处理后不再导入 GetSystemTimePreciseAsFileTime
+    [ ] 未再提示缺少 vcruntime140.dll / msvcp140.dll / api-ms-win-crt-*.dll
+
+═══════════════════════════════════════════════════════════════
 【一】基础用法（不需要 OCR）
 ═══════════════════════════════════════════════════════════════
 
