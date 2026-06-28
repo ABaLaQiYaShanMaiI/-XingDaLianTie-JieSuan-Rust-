@@ -224,6 +224,21 @@ OCR 功能需要安装以下外部工具：
 
 ## 注意事项
 
+- **Windows 7 运行前置条件与排障**:
+  - 仅建议在 **Windows 7 SP1 x64** 上尝试运行；未安装 SP1 的 Win7 启动失败概率很高。
+  - 目标机器需预先安装 **Microsoft Visual C++ 2015-2022 Redistributable (x64)**。缺少时，程序可能在双击后无响应，或直接提示 `vcruntime140.dll`、`msvcp140.dll` 缺失。
+  - 即使已经用仓库内的 `fix_win7_import.py` 修复了 `GetSystemTimePreciseAsFileTime` 导入，**仍可能因为 VC++ 运行库、UCRT 或 Win7 补丁链缺失而无法启动**。
+  - Win7 常见高概率原因不是业务逻辑本身，而是系统未补齐 **SHA-2 / 服务堆栈 / UCRT** 相关更新，导致 `api-ms-win-crt-*.dll`、`ucrtbase.dll` 或运行库加载失败。
+  - 若提示缺少 `vcruntime140.dll`、`msvcp140.dll`：先安装/修复 **VC++ 2015-2022 x64 运行库**，重启后再试；不要随意从第三方网站单独下载 DLL 覆盖系统目录。
+  - 若提示缺少 `api-ms-win-crt-*.dll`：通常表示 **UCRT 未安装完整**，需先确认 Win7 已升级到 SP1，再补齐 Windows Update 中的 UCRT / SHA-2 相关更新，然后重新安装 VC++ 运行库。
+  - 可用 `dumpbin /imports xingda-jiesuan.exe` 检查导入表；若没有 `GetSystemTimePreciseAsFileTime`，说明 PE 导入修复已生效。若仍无法启动，再用 **Dependency Walker** 或新版 **Dependencies** 检查是否有缺失的 `vcruntime140.dll`、`msvcp140.dll`、`api-ms-win-crt-*.dll`。
+  - `fix_win7_import.py` 的作用范围仅限于把 `kernel32.dll` 导入中的 `GetSystemTimePreciseAsFileTime` 重定向为 `GetSystemTimeAsFileTime`，**不覆盖** VC++ 运行库、UCRT、系统补丁、证书链等其它启动前置条件。
+  - 最小自检清单：
+    - [ ] 目标系统是 **Windows 7 SP1 x64**
+    - [ ] 已安装 **Microsoft Visual C++ 2015-2022 Redistributable (x64)**
+    - [ ] Windows 7 已补齐常见 **SHA-2 / 服务堆栈 / UCRT** 更新后再安装运行库
+    - [ ] `dumpbin /imports` 已确认不再导入 `GetSystemTimePreciseAsFileTime`
+    - [ ] 依赖检查工具未再报 `vcruntime140.dll`、`msvcp140.dll`、`api-ms-win-crt-*.dll` 缺失
 - **PDF 解析**: pdf-extract 对复杂排版 PDF（带水印、多层叠加等）支持有限；PDF 无文本层时自动回退至 lopdf
 - **OCR**: 扫描件/图片型 PDF 需使用 `--ocr` 标志并安装 Ghostscript 和 Tesseract；多页 PDF 会自动并行处理
 - **分类精度**: 依甲方考核条款标准，特殊格式或新增条款可能需调整 `classify_rules.yaml`
